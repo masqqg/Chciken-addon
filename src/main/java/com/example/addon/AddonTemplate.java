@@ -1,8 +1,14 @@
+
 package com.example.addon;
 
 import com.example.addon.commands.CommandExample;
 import com.example.addon.hud.HudExample;
-import com.example.addon.modules.ModuleExample;
+import com.example.addon.modules.ChickenStorageESP;
+import com.example.addon.modules.ClusterBypass;
+import com.example.addon.modules.PlayerBypass;
+import com.example.addon.modules.ClearRender;
+import com.example.addon.modules.PlayerBypassV2;
+
 import com.mojang.logging.LogUtils;
 import meteordevelopment.meteorclient.addons.GithubRepo;
 import meteordevelopment.meteorclient.addons.MeteorAddon;
@@ -15,15 +21,20 @@ import org.slf4j.Logger;
 
 public class AddonTemplate extends MeteorAddon {
     public static final Logger LOG = LogUtils.getLogger();
-    public static final Category CATEGORY = new Category("Example");
-    public static final HudGroup HUD_GROUP = new HudGroup("Example");
+
+    public static final Category CATEGORY = new Category("Chicken");
+    public static final HudGroup HUD_GROUP = new HudGroup("Chicken");
 
     @Override
     public void onInitialize() {
-        LOG.info("Initializing Meteor Addon Template");
+        LOG.info("Initializing Chicken Addon");
 
         // Modules
-        Modules.get().add(new ModuleExample());
+        Modules.get().add(new ChickenStorageESP());
+        Modules.get().add(new ClusterBypass());
+        Modules.get().add(new PlayerBypass());
+        Modules.get().add(new ClearRender());
+        Modules.get().add(new PlayerBypassV2());
 
         // Commands
         Commands.add(new CommandExample());
