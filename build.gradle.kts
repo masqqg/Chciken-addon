@@ -25,7 +25,7 @@ repositories {
 dependencies {
     // Fabric
     minecraft(libs.minecraft)
-    mappings(variantOf(libs.yarn.mappings) { classifier("v2") })
+    mappings(loom.officialMojangMappings())
     modImplementation(libs.fabric.loader)
 
     // Meteor
