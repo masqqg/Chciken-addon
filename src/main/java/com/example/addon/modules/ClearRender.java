@@ -1,49 +1,43 @@
 package com.example.addon.modules;
 
 import com.example.addon.AddonTemplate;
-import meteordevelopment.meteorclient.events.render.Render3DEvent;
-import meteordevelopment.meteorclient.renderer.ShapeMode;
-import meteordevelopment.meteorclient.settings.EnumSetting;
+import meteordevelopment.meteorclient.events.world.TickEvent;
+import meteordevelopment.meteorclient.settings.BoolSetting;
 import meteordevelopment.meteorclient.settings.IntSetting;
 import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.systems.modules.Module;
-import meteordevelopment.meteorclient.utils.render.color.Color;
-import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.tags.BlockTags;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
-import net.minecraft.world.phys.AABB;
+import net.minecraft.world.level.block.state.BlockState;
 
 public class ClearRender extends Module {
-    public enum DisplayMode {
-        DeepslateOverlay,
-        HideOverlay
-    }
-
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
-    private final SettingGroup sgRender = settings.createGroup("Render");
 
     private final Setting<Integer> radius = sgGeneral.add(new IntSetting.Builder()
-        .name("radius").description("Radius to scan around the player.")
+        .name("radius").description("Blocks around the player to clean (also up and down).")
         .defaultValue(5).range(1, 16).sliderRange(1, 10).build());
 
-    private final Setting<DisplayMode> mode = sgGeneral.add(new EnumSetting.Builder<DisplayMode>()
-        .name("mode").description("Render a deepslate-colored overlay or skip drawing the overlay.")
-        .defaultValue(DisplayMode.DeepslateOverlay).build());
+    private final Setting<Boolean> onlyEnclosed = sgGeneral.add(new BoolSetting.Builder()
+        .name("only-enclosed").description("Only replace ores that touch no air or fluid (fake ores).")
+        .defaultValue(true).build());
 
-    private final Setting<SettingColor> overlayColor = sgRender.add(new meteordevelopment.meteorclient.settings.ColorSetting.Builder()
-        .name("overlay-color").description("Color for the deepslate overlay.")
-        .defaultValue(new SettingColor(70, 70, 78, 180)).build());
+    private final Setting<Boolean> deepslateBelowZero = sgGeneral.add(new BoolSetting.Builder()
+        .name("deepslate-below-zero").description("Use deepslate under Y 0, stone above.")
+        .defaultValue(true).build());
 
     public ClearRender() {
         super(AddonTemplate.CATEGORY, "clear-render",
-            "Client-side visual overlay for solid blocks near air gaps. Does not change world blocks.");
+            "Replaces fake ores around you with stone on your client only.");
     }
 
     @EventHandler
-    private void onRender3D(Render3DEvent event) {
-        if (mc.level == null || mc.player == null || mode.get() == DisplayMode.HideOverlay) return;
+    private void onTick(TickEvent.Post event) {
+        if (mc.level == null || mc.player == null) return;
 
         BlockPos origin = mc.player.blockPosition();
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
@@ -51,27 +45,38 @@ public class ClearRender extends Module {
 
         for (int x = origin.getX() - r; x <= origin.getX() + r; x++) {
             for (int z = origin.getZ() - r; z <= origin.getZ() + r; z++) {
-                for (int y = Math.max(-64, origin.getY() - r); y <= Math.min(0, origin.getY() + r); y++) {
+                for (int y = origin.getY() - r; y <= origin.getY() + r; y++) {
                     pos.set(x, y, z);
                     if (!mc.level.hasChunkAt(pos)) continue;
-                    if (mc.level.getBlockState(pos).isAir()) continue;
 
-                    boolean nearAir = false;
-                    BlockPos[] neighbors = {pos.above(), pos.below(), pos.north(), pos.south(), pos.east(), pos.west()};
-                    for (BlockPos neighbor : neighbors) {
-                        if (mc.level.getBlockState(neighbor).isAir()) {
-                            nearAir = true;
-                            break;
-                        }
-                    }
+                    BlockState state = mc.level.getBlockState(pos);
+                    if (!isOre(state)) continue;
+                    if (onlyEnclosed.get() && isExposed(pos)) continue;
 
-                    if (nearAir) {
-                        AABB box = new AABB(pos);
-                        SettingColor c = overlayColor.get();
-                        event.renderer.box(box, c, c, ShapeMode.Lines, 0);
-                    }
+                    Block replacement = (deepslateBelowZero.get() && y < 0) ? Blocks.DEEPSLATE : Blocks.STONE;
+                    mc.level.setBlock(pos.immutable(), replacement.defaultBlockState(),
+                        Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE);
                 }
             }
         }
+    }
+
+    private boolean isOre(BlockState state) {
+        return state.is(BlockTags.COAL_ORES)
+            || state.is(BlockTags.IRON_ORES)
+            || state.is(BlockTags.COPPER_ORES)
+            || state.is(BlockTags.GOLD_ORES)
+            || state.is(BlockTags.REDSTONE_ORES)
+            || state.is(BlockTags.LAPIS_ORES)
+            || state.is(BlockTags.DIAMOND_ORES)
+            || state.is(BlockTags.EMERALD_ORES);
+    }
+
+    private boolean isExposed(BlockPos pos) {
+        for (Direction dir : Direction.values()) {
+            BlockState neighbor = mc.level.getBlockState(pos.relative(dir));
+            if (neighbor.isAir() || !neighbor.getFluidState().isEmpty()) return true;
+        }
+        return false;
     }
 }
