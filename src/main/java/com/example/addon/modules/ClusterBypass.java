@@ -26,6 +26,8 @@ import net.minecraft.network.protocol.game.ClientboundLightUpdatePacket;
 import net.minecraft.network.protocol.game.ClientboundLightUpdatePacketData;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.phys.AABB;
 import org.joml.Vector3d;
 
@@ -38,18 +40,26 @@ import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.function.Predicate;
 
 /**
- * Hidden amethyst clusters leak through block light (level 5) in light packets.
- * Around a grown cluster, 1-2 sides are amethyst and the rest are deepslate.
- * We collect the DEEPSLATE blocks touching every light-5 point.
- *  - enough deepslate  -> purple chunk marker (flat, half a block tall)
- *  - a lot of deepslate -> big red marker + "Base chance: 80%" text
+ * Two leaks are combined:
+ *  1) LIGHT: hidden amethyst clusters have block light 5. Deepslate blocks touching
+ *     those points are collected.
+ *  2) PALETTE: the block palette of every chunk section is sent as-is. If a section
+ *     (at or below palette-max-y, e.g. under Y 0 where light does not work) lists
+ *     amethyst in its palette but has no amethyst block in its data, the server hid
+ *     them -> each such section adds "palette-points".
+ * A chunk with enough points gets a flat purple marker, a lot of points a big red
+ * marker with "Base chance: 80%".
  */
 public class ClusterBypass extends Module {
     private static final int CLUSTER_LIGHT = 5;
     private static final int MAX_PER_TICK = 8;
     private static final int MAX_AGE_TICKS = 200;
+
+    private static final Predicate<BlockState> AMETHYST =
+        st -> st.is(Blocks.AMETHYST_CLUSTER) || st.is(Blocks.BUDDING_AMETHYST);
 
     private static class Pending {
         final int chunkX, chunkZ;
@@ -69,6 +79,7 @@ public class ClusterBypass extends Module {
     }
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
+    private final SettingGroup sgPalette = settings.createGroup("Palette");
     private final SettingGroup sgRender = settings.createGroup("Render");
 
     private final Setting<Integer> range = sgGeneral.add(new IntSetting.Builder()
@@ -76,24 +87,36 @@ public class ClusterBypass extends Module {
         .defaultValue(16).range(1, 32).sliderRange(1, 32).build());
 
     private final Setting<Integer> minimum = sgGeneral.add(new IntSetting.Builder()
-        .name("minimum-deepslate").description("Deepslate blocks next to clusters needed for the purple marker.")
+        .name("minimum-points").description("Points needed for the purple marker.")
         .defaultValue(12).range(1, 100).sliderRange(1, 60).build());
 
     private final Setting<Integer> baseThreshold = sgGeneral.add(new IntSetting.Builder()
-        .name("base-threshold").description("Deepslate blocks needed for the big red base marker.")
-        .defaultValue(16).range(1, 200).sliderRange(1, 80).build());
+        .name("base-threshold").description("Points needed for the big red base marker.")
+        .defaultValue(20).range(1, 200).sliderRange(1, 80).build());
 
     private final Setting<Integer> minY = sgGeneral.add(new IntSetting.Builder()
-        .name("min-y").description("Lowest Y to scan.")
+        .name("min-y").description("Lowest Y for the light scan.")
         .defaultValue(-64).range(-64, 320).sliderRange(-64, 128).build());
 
     private final Setting<Integer> maxY = sgGeneral.add(new IntSetting.Builder()
-        .name("max-y").description("Highest Y to scan.")
+        .name("max-y").description("Highest Y for the light scan.")
         .defaultValue(64).range(-64, 320).sliderRange(-64, 128).build());
 
     private final Setting<Boolean> debug = sgGeneral.add(new BoolSetting.Builder()
-        .name("debug").description("Print what was found in chat (light points / deepslate).")
+        .name("debug").description("Print light and palette findings in chat.")
         .defaultValue(false).build());
+
+    private final Setting<Boolean> usePalette = sgPalette.add(new BoolSetting.Builder()
+        .name("palette-bypass").description("Also use the section palette leak.")
+        .defaultValue(true).build());
+
+    private final Setting<Integer> paletteMaxY = sgPalette.add(new IntSetting.Builder()
+        .name("palette-max-y").description("Check sections that start at or below this Y.")
+        .defaultValue(0).range(-64, 320).sliderRange(-64, 128).build());
+
+    private final Setting<Integer> palettePoints = sgPalette.add(new IntSetting.Builder()
+        .name("palette-points").description("Points added per section with an amethyst palette leak.")
+        .defaultValue(12).range(1, 100).sliderRange(1, 40).build());
 
     private final Setting<Integer> markerY = sgRender.add(new IntSetting.Builder()
         .name("marker-y").description("Y level of the chunk markers.")
@@ -126,11 +149,12 @@ public class ClusterBypass extends Module {
     private final Queue<Pending> pending = new ConcurrentLinkedQueue<>();
     private final Queue<Long> unloads = new ConcurrentLinkedQueue<>();
     private final Map<Long, Map<Integer, Set<BlockPos>>> chunks = new HashMap<>();
+    private final Map<Long, Integer> leaks = new HashMap<>();
     private int dbgLight5;
 
     public ClusterBypass() {
         super(AddonTemplate.CATEGORY, "cluster-bypass",
-            "Marks chunks with many deepslate blocks around hidden amethyst clusters.");
+            "Marks chunks with hidden amethyst clusters (light leak + palette leak).");
     }
 
     private static long key(int x, int z) {
@@ -143,10 +167,23 @@ public class ClusterBypass extends Module {
         return total;
     }
 
+    private int total(long k) {
+        Map<Integer, Set<BlockPos>> m = chunks.get(k);
+        int c = m == null ? 0 : count(m);
+        return c + palettePoints.get() * leaks.getOrDefault(k, 0);
+    }
+
+    private Set<Long> allKeys() {
+        Set<Long> keys = new HashSet<>(chunks.keySet());
+        keys.addAll(leaks.keySet());
+        return keys;
+    }
+
     private void clearAll() {
         pending.clear();
         unloads.clear();
         chunks.clear();
+        leaks.clear();
     }
 
     @Override
@@ -199,6 +236,7 @@ public class ClusterBypass extends Module {
         while ((gone = unloads.poll()) != null) {
             long k = gone;
             chunks.remove(k);
+            leaks.remove(k);
             pending.removeIf(p -> key(p.chunkX, p.chunkZ) == k);
         }
 
@@ -220,7 +258,15 @@ public class ClusterBypass extends Module {
 
     private void handle(Pending p) {
         long k = key(p.chunkX, p.chunkZ);
-        if (p.fullChunk) chunks.remove(k);
+
+        if (p.fullChunk) {
+            chunks.remove(k);
+            if (usePalette.get()) {
+                int n = paletteLeaks(p.chunkX, p.chunkZ);
+                if (n > 0) leaks.put(k, n);
+                else leaks.remove(k);
+            }
+        }
 
         Map<Integer, Set<BlockPos>> perSection = chunks.computeIfAbsent(k, x -> new HashMap<>());
         int bottomSection = (mc.level.getMinY() >> 4) - 1;
@@ -252,6 +298,35 @@ public class ClusterBypass extends Module {
         }
 
         if (perSection.isEmpty()) chunks.remove(k);
+    }
+
+    /** Sections whose palette lists amethyst while no amethyst block is in the data. */
+    private int paletteLeaks(int cx, int cz) {
+        LevelChunk chunk = mc.level.getChunk(cx, cz);
+        int minSection = mc.level.getMinY() >> 4;
+        int leakCount = 0;
+
+        for (int i = 0; i < chunk.getSectionsCount(); i++) {
+            int sectionY = minSection + i;
+            if ((sectionY << 4) > paletteMaxY.get()) continue;
+
+            LevelChunkSection section = chunk.getSection(i);
+            if (section.hasOnlyAir()) continue;
+            if (!section.maybeHas(AMETHYST)) continue;
+
+            int[] visible = {0};
+            section.getStates().count((state, n) -> {
+                if (AMETHYST.test(state)) visible[0] += n;
+            });
+
+            if (debug.get()) {
+                info("chunk %d,%d section y=%d: amethyst in palette, visible blocks=%d",
+                    cx, cz, sectionY << 4, visible[0]);
+            }
+
+            if (visible[0] == 0) leakCount++;
+        }
+        return leakCount;
     }
 
     private Set<BlockPos> decode(int cx, int cz, int sectionY, byte[] nib) {
@@ -295,17 +370,16 @@ public class ClusterBypass extends Module {
         int r = range.get();
         double y = markerY.get();
 
-        for (Map.Entry<Long, Map<Integer, Set<BlockPos>>> entry : chunks.entrySet()) {
-            long k = entry.getKey();
+        for (long k : allKeys()) {
             int cx = (int) (k >> 32);
             int cz = (int) k;
 
             if (Math.abs(cx - pcx) > r || Math.abs(cz - pcz) > r) continue;
 
-            int count = count(entry.getValue());
-            if (count < minimum.get()) continue;
+            int points = total(k);
+            if (points < minimum.get()) continue;
 
-            if (count >= baseThreshold.get()) {
+            if (points >= baseThreshold.get()) {
                 AABB big = new AABB(
                     cx * 16.0, y, cz * 16.0,
                     cx * 16.0 + 16.0, y + baseHeight.get(), cz * 16.0 + 16.0
@@ -331,13 +405,12 @@ public class ClusterBypass extends Module {
         double y = markerY.get() + baseHeight.get() + 1.5;
         String label = "Base chance: 80%";
 
-        for (Map.Entry<Long, Map<Integer, Set<BlockPos>>> entry : chunks.entrySet()) {
-            long k = entry.getKey();
+        for (long k : allKeys()) {
             int cx = (int) (k >> 32);
             int cz = (int) k;
 
             if (Math.abs(cx - pcx) > r || Math.abs(cz - pcz) > r) continue;
-            if (count(entry.getValue()) < baseThreshold.get()) continue;
+            if (total(k) < baseThreshold.get()) continue;
 
             Vector3d pos = new Vector3d(cx * 16.0 + 8.0, y, cz * 16.0 + 8.0);
             if (!NametagUtils.to2D(pos, 1.5)) continue;
