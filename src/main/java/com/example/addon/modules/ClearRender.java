@@ -2,109 +2,137 @@ package com.example.addon.modules;
 
 import com.example.addon.AddonTemplate;
 import meteordevelopment.meteorclient.events.world.TickEvent;
+import meteordevelopment.meteorclient.settings.BoolSetting;
 import meteordevelopment.meteorclient.settings.IntSetting;
 import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.core.BlockPos;
-import net.minecraft.tags.BlockTags;
+import net.minecraft.core.Direction;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
-import net.minecraft.world.level.block.state.BlockState;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
- * Removes fake (anti-xray) ores around the player on the client only.
- * Fake ores are dense and mixed: lots of ore neighbours, many of a different ore type.
- * Real veins are sparse and single-type. Ores are replaced with stone / deepslate.
+ * Finds air pockets that are completely sealed on every side and are at most
+ * "max-size" blocks big, then fills them with stone (deepslate under Y 0).
+ * Client side only.
  */
 public class ClearRender extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
 
     private final Setting<Integer> radius = sgGeneral.add(new IntSetting.Builder()
-        .name("radius").description("Blocks around the player to clean (also up and down).")
-        .defaultValue(5).range(1, 16).sliderRange(1, 10).build());
+        .name("radius").description("Scan radius around you in blocks.")
+        .defaultValue(16).range(4, 48).sliderRange(4, 32).build());
 
-    private final Setting<Integer> minDifferent = sgGeneral.add(new IntSetting.Builder()
-        .name("min-different-neighbors")
-        .description("Ore is fake if this many neighbors are a DIFFERENT ore type.")
-        .defaultValue(2).range(1, 26).sliderRange(1, 10).build());
+    private final Setting<Integer> maxSize = sgGeneral.add(new IntSetting.Builder()
+        .name("max-size").description("Largest sealed pocket (in blocks) that gets filled.")
+        .defaultValue(5).range(1, 32).sliderRange(1, 16).build());
 
-    private final Setting<Integer> minDense = sgGeneral.add(new IntSetting.Builder()
-        .name("min-ore-neighbors")
-        .description("Ore is also fake if this many of its 26 neighbors are any ore.")
-        .defaultValue(8).range(1, 26).sliderRange(1, 26).build());
+    private final Setting<Integer> interval = sgGeneral.add(new IntSetting.Builder()
+        .name("interval").description("Scan every N ticks.")
+        .defaultValue(5).range(1, 40).sliderRange(1, 20).build());
+
+    private final Setting<Boolean> debug = sgGeneral.add(new BoolSetting.Builder()
+        .name("debug").description("Print how many blocks were filled.")
+        .defaultValue(false).build());
+
+    private int ticks;
 
     public ClearRender() {
         super(AddonTemplate.CATEGORY, "clear-render",
-            "Replaces fake ores around you with stone on your client only.");
+            "Fills small sealed air pockets around you with stone on your client.");
     }
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
         if (mc.level == null || mc.player == null) return;
+        if (++ticks % interval.get() != 0) return;
 
         BlockPos origin = mc.player.blockPosition();
-        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
         int r = radius.get();
-        List<BlockPos> fake = new ArrayList<>();
+        int max = maxSize.get();
 
-        // Pass 1: decide using the untouched world so counts stay accurate
+        Set<Long> visited = new HashSet<>();
+        List<BlockPos> toFill = new ArrayList<>();
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+
         for (int x = origin.getX() - r; x <= origin.getX() + r; x++) {
             for (int z = origin.getZ() - r; z <= origin.getZ() + r; z++) {
                 for (int y = origin.getY() - r; y <= origin.getY() + r; y++) {
+                    if (y < mc.level.getMinY() || y >= mc.level.getMaxY()) continue;
+
                     pos.set(x, y, z);
+                    if (visited.contains(pos.asLong())) continue;
                     if (!mc.level.hasChunkAt(pos)) continue;
+                    if (!mc.level.getBlockState(pos).isAir()) continue;
 
-                    int type = oreType(mc.level.getBlockState(pos));
-                    if (type == 0) continue;
-
-                    if (isFake(pos, type)) fake.add(pos.immutable());
+                    List<BlockPos> pocket = floodFill(pos.immutable(), max, visited);
+                    if (pocket != null) toFill.addAll(pocket);
                 }
             }
         }
 
-        // Pass 2: replace
-        for (BlockPos p : fake) {
-            Block replacement = p.getY() < 0 ? Blocks.DEEPSLATE : Blocks.STONE;
-            mc.level.setBlock(p, replacement.defaultBlockState(),
+        for (BlockPos p : toFill) {
+            Block block = p.getY() < 0 ? Blocks.DEEPSLATE : Blocks.STONE;
+            mc.level.setBlock(p, block.defaultBlockState(),
                 Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE);
         }
+
+        if (debug.get() && !toFill.isEmpty()) info("filled %d blocks", toFill.size());
     }
 
-    private boolean isFake(BlockPos center, int type) {
-        int total = 0;
-        int different = 0;
-        BlockPos.MutableBlockPos n = new BlockPos.MutableBlockPos();
+    /**
+     * Returns the pocket if it is sealed and small enough, otherwise null.
+     * A pocket is "open" if it grows past max, touches an unloaded chunk, or
+     * is bigger than max.
+     */
+    private List<BlockPos> floodFill(BlockPos start, int max, Set<Long> visited) {
+        List<BlockPos> region = new ArrayList<>();
+        Set<Long> seen = new HashSet<>();
+        ArrayDeque<BlockPos> queue = new ArrayDeque<>();
+        queue.add(start);
+        seen.add(start.asLong());
+        boolean open = false;
 
-        for (int dx = -1; dx <= 1; dx++) {
-            for (int dy = -1; dy <= 1; dy++) {
-                for (int dz = -1; dz <= 1; dz++) {
-                    if (dx == 0 && dy == 0 && dz == 0) continue;
-                    n.set(center.getX() + dx, center.getY() + dy, center.getZ() + dz);
-                    int t = oreType(mc.level.getBlockState(n));
-                    if (t == 0) continue;
-                    total++;
-                    if (t != type) different++;
+        while (!queue.isEmpty()) {
+            BlockPos p = queue.poll();
+            region.add(p);
+
+            if (region.size() > max) {
+                open = true;
+                break;
+            }
+
+            for (Direction dir : Direction.values()) {
+                BlockPos n = p.relative(dir);
+                long key = n.asLong();
+                if (seen.contains(key)) continue;
+
+                // above or below the world counts as a wall
+                if (n.getY() < mc.level.getMinY() || n.getY() >= mc.level.getMaxY()) continue;
+
+                if (!mc.level.hasChunkAt(n)) {
+                    open = true;
+                    break;
+                }
+
+                if (mc.level.getBlockState(n).isAir()) {
+                    seen.add(key);
+                    queue.add(n);
                 }
             }
+
+            if (open) break;
         }
 
-        return different >= minDifferent.get() || total >= minDense.get();
-    }
-
-    private int oreType(BlockState state) {
-        if (state.is(BlockTags.COAL_ORES)) return 1;
-        if (state.is(BlockTags.IRON_ORES)) return 2;
-        if (state.is(BlockTags.COPPER_ORES)) return 3;
-        if (state.is(BlockTags.GOLD_ORES)) return 4;
-        if (state.is(BlockTags.REDSTONE_ORES)) return 5;
-        if (state.is(BlockTags.LAPIS_ORES)) return 6;
-        if (state.is(BlockTags.DIAMOND_ORES)) return 7;
-        if (state.is(BlockTags.EMERALD_ORES)) return 8;
-        return 0;
+        visited.addAll(seen);
+        return open ? null : region;
     }
 }

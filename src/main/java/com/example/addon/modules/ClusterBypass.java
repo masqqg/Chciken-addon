@@ -28,16 +28,18 @@ import net.minecraft.world.phys.AABB;
 import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Queue;
+import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
 /**
- * Same detection idea as Codex ClusterDetect: hidden amethyst clusters leak through
- * block light (level 5) in the light packets. A light-5 point that touches a visible
- * amethyst block / budding amethyst is counted. Chunks with enough points get a purple
- * chunk-sized, half-block-tall marker (SusChunkFinder style).
+ * Hidden amethyst clusters leak through block light (level 5) in light packets.
+ * Around a grown cluster, 1-2 sides are amethyst and the rest are deepslate.
+ * We collect the DEEPSLATE blocks touching every light-5 point. A chunk with
+ * enough of those deepslate blocks gets a purple chunk-sized, half-block-tall marker.
  */
 public class ClusterBypass extends Module {
     private static final int CLUSTER_LIGHT = 5;
@@ -69,20 +71,20 @@ public class ClusterBypass extends Module {
         .defaultValue(16).range(1, 32).sliderRange(1, 32).build());
 
     private final Setting<Integer> minimum = sgGeneral.add(new IntSetting.Builder()
-        .name("minimum-cluster").description("Minimum cluster points in a chunk before it is marked.")
-        .defaultValue(12).range(1, 64).sliderRange(1, 40).build());
+        .name("minimum-deepslate").description("Deepslate blocks next to clusters needed to mark a chunk.")
+        .defaultValue(12).range(1, 100).sliderRange(1, 60).build());
 
     private final Setting<Integer> minY = sgGeneral.add(new IntSetting.Builder()
         .name("min-y").description("Lowest Y to scan.")
-        .defaultValue(17).range(-64, 320).sliderRange(-64, 128).build());
+        .defaultValue(-64).range(-64, 320).sliderRange(-64, 128).build());
 
     private final Setting<Integer> maxY = sgGeneral.add(new IntSetting.Builder()
         .name("max-y").description("Highest Y to scan.")
-        .defaultValue(50).range(-64, 320).sliderRange(-64, 128).build());
+        .defaultValue(64).range(-64, 320).sliderRange(-64, 128).build());
 
-    private final Setting<Boolean> onlyHidden = sgGeneral.add(new BoolSetting.Builder()
-        .name("only-hidden").description("Only count points where your client shows a solid block (deepslate/stone).")
-        .defaultValue(true).build());
+    private final Setting<Boolean> debug = sgGeneral.add(new BoolSetting.Builder()
+        .name("debug").description("Print what was found in chat (light points / deepslate).")
+        .defaultValue(false).build());
 
     private final Setting<Integer> markerY = sgRender.add(new IntSetting.Builder()
         .name("marker-y").description("Y level of the chunk marker.")
@@ -98,11 +100,12 @@ public class ClusterBypass extends Module {
 
     private final Queue<Pending> pending = new ConcurrentLinkedQueue<>();
     private final Queue<Long> unloads = new ConcurrentLinkedQueue<>();
-    private final Map<Long, Map<Integer, List<BlockPos>>> chunks = new HashMap<>();
+    private final Map<Long, Map<Integer, Set<BlockPos>>> chunks = new HashMap<>();
+    private int dbgLight5;
 
     public ClusterBypass() {
         super(AddonTemplate.CATEGORY, "cluster-bypass",
-            "Marks chunks with many hidden amethyst clusters (light leak detection).");
+            "Marks chunks with many deepslate blocks around hidden amethyst clusters.");
     }
 
     private static long key(int x, int z) {
@@ -188,13 +191,14 @@ public class ClusterBypass extends Module {
         long k = key(p.chunkX, p.chunkZ);
         if (p.fullChunk) chunks.remove(k);
 
-        Map<Integer, List<BlockPos>> perSection = chunks.computeIfAbsent(k, x -> new HashMap<>());
+        Map<Integer, Set<BlockPos>> perSection = chunks.computeIfAbsent(k, x -> new HashMap<>());
         int bottomSection = (mc.level.getMinY() >> 4) - 1;
 
         for (int bit = p.empty.nextSetBit(0); bit >= 0; bit = p.empty.nextSetBit(bit + 1)) {
             perSection.remove(bottomSection + bit);
         }
 
+        dbgLight5 = 0;
         int idx = 0;
         for (int bit = p.mask.nextSetBit(0); bit >= 0; bit = p.mask.nextSetBit(bit + 1)) {
             byte[] nib = idx < p.nibbles.size() ? p.nibbles.get(idx) : null;
@@ -208,15 +212,21 @@ public class ClusterBypass extends Module {
             int secMax = secMin + 15;
             if (secMin > maxY.get() || secMax < minY.get()) continue;
 
-            List<BlockPos> found = decode(p.chunkX, p.chunkZ, sectionY, nib);
+            Set<BlockPos> found = decode(p.chunkX, p.chunkZ, sectionY, nib);
             if (!found.isEmpty()) perSection.put(sectionY, found);
+        }
+
+        if (debug.get() && dbgLight5 > 0) {
+            int total = 0;
+            for (Set<BlockPos> s : perSection.values()) total += s.size();
+            info("chunk %d,%d: light5=%d, deepslate=%d", p.chunkX, p.chunkZ, dbgLight5, total);
         }
 
         if (perSection.isEmpty()) chunks.remove(k);
     }
 
-    private List<BlockPos> decode(int cx, int cz, int sectionY, byte[] nib) {
-        List<BlockPos> out = new ArrayList<>();
+    private Set<BlockPos> decode(int cx, int cz, int sectionY, byte[] nib) {
+        Set<BlockPos> out = new HashSet<>();
         int lo = minY.get();
         int hi = maxY.get();
 
@@ -225,32 +235,26 @@ public class ClusterBypass extends Module {
             int light = (i & 1) == 0 ? (b & 15) : ((b >> 4) & 15);
             if (light != CLUSTER_LIGHT) continue;
 
-            int ly = i >> 8;
-            int y = (sectionY << 4) + ly;
+            int y = (sectionY << 4) + (i >> 8);
             if (y < lo || y > hi) continue;
 
             int lx = i & 15;
             int lz = (i >> 4) & 15;
             BlockPos pos = new BlockPos((cx << 4) + lx, y, (cz << 4) + lz);
 
-            if (onlyHidden.get()) {
-                BlockState self = mc.level.getBlockState(pos);
-                if (!self.canOcclude()) continue;
-            }
+            // Light 5 inside a block we see as solid = hidden cluster
+            BlockState self = mc.level.getBlockState(pos);
+            if (!self.canOcclude()) continue;
+            dbgLight5++;
 
-            if (touchesAmethyst(pos)) out.add(pos);
+            // Collect the deepslate blocks around the cluster
+            for (Direction dir : Direction.values()) {
+                BlockPos n = pos.relative(dir);
+                if (!mc.level.hasChunkAt(n)) continue;
+                if (mc.level.getBlockState(n).is(Blocks.DEEPSLATE)) out.add(n);
+            }
         }
         return out;
-    }
-
-    private boolean touchesAmethyst(BlockPos pos) {
-        for (Direction dir : Direction.values()) {
-            BlockPos n = pos.relative(dir);
-            if (!mc.level.hasChunkAt(n)) continue;
-            BlockState s = mc.level.getBlockState(n);
-            if (s.is(Blocks.AMETHYST_BLOCK) || s.is(Blocks.BUDDING_AMETHYST)) return true;
-        }
-        return false;
     }
 
     @EventHandler
@@ -262,7 +266,7 @@ public class ClusterBypass extends Module {
         int r = range.get();
         double y = markerY.get();
 
-        for (Map.Entry<Long, Map<Integer, List<BlockPos>>> entry : chunks.entrySet()) {
+        for (Map.Entry<Long, Map<Integer, Set<BlockPos>>> entry : chunks.entrySet()) {
             long k = entry.getKey();
             int cx = (int) (k >> 32);
             int cz = (int) k;
@@ -270,7 +274,7 @@ public class ClusterBypass extends Module {
             if (Math.abs(cx - pcx) > r || Math.abs(cz - pcz) > r) continue;
 
             int count = 0;
-            for (List<BlockPos> list : entry.getValue().values()) count += list.size();
+            for (Set<BlockPos> s : entry.getValue().values()) count += s.size();
             if (count < minimum.get()) continue;
 
             AABB marker = new AABB(
