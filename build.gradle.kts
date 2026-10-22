@@ -1,3 +1,8 @@
+buildscript {
+    repositories { mavenCentral() }
+    dependencies { classpath("com.guardsquare:proguard-gradle:7.7.0") }
+}
+
 plugins {
     alias(libs.plugins.fabric.loom)
 }
@@ -90,4 +95,17 @@ tasks {
             )
         )
     }
+}
+
+// Obfuscation: run with ./gradlew obfuscate
+val obfuscate by tasks.registering(proguard.gradle.ProGuardTask::class) {
+    dependsOn(tasks.named("remapJar"))
+    injars(tasks.named<org.gradle.jvm.tasks.Jar>("remapJar").flatMap { it.archiveFile })
+    outjars(layout.buildDirectory.file("libs/${archivesBaseName}-obf.jar"))
+    libraryjars(configurations.runtimeClasspath)
+    libraryjars(
+        mapOf("jarfilter" to "!**.jar", "filter" to "!module-info.class"),
+        "${System.getProperty("java.home")}/jmods/java.base.jmod"
+    )
+    configuration("proguard-rules.pro")
 }
