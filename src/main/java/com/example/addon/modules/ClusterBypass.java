@@ -3,15 +3,18 @@ package com.example.addon.modules;
 import com.example.addon.AddonTemplate;
 import meteordevelopment.meteorclient.events.game.GameLeftEvent;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
+import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
+import meteordevelopment.meteorclient.renderer.text.TextRenderer;
 import meteordevelopment.meteorclient.settings.BoolSetting;
 import meteordevelopment.meteorclient.settings.ColorSetting;
 import meteordevelopment.meteorclient.settings.IntSetting;
 import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.utils.render.NametagUtils;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.core.BlockPos;
@@ -24,6 +27,7 @@ import net.minecraft.network.protocol.game.ClientboundLightUpdatePacketData;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
+import org.joml.Vector3d;
 
 import java.util.ArrayList;
 import java.util.BitSet;
@@ -38,8 +42,9 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 /**
  * Hidden amethyst clusters leak through block light (level 5) in light packets.
  * Around a grown cluster, 1-2 sides are amethyst and the rest are deepslate.
- * We collect the DEEPSLATE blocks touching every light-5 point. A chunk with
- * enough of those deepslate blocks gets a purple chunk-sized, half-block-tall marker.
+ * We collect the DEEPSLATE blocks touching every light-5 point.
+ *  - enough deepslate  -> purple chunk marker (flat, half a block tall)
+ *  - a lot of deepslate -> big red marker + "Base chance: 80%" text
  */
 public class ClusterBypass extends Module {
     private static final int CLUSTER_LIGHT = 5;
@@ -71,8 +76,12 @@ public class ClusterBypass extends Module {
         .defaultValue(16).range(1, 32).sliderRange(1, 32).build());
 
     private final Setting<Integer> minimum = sgGeneral.add(new IntSetting.Builder()
-        .name("minimum-deepslate").description("Deepslate blocks next to clusters needed to mark a chunk.")
+        .name("minimum-deepslate").description("Deepslate blocks next to clusters needed for the purple marker.")
         .defaultValue(12).range(1, 100).sliderRange(1, 60).build());
+
+    private final Setting<Integer> baseThreshold = sgGeneral.add(new IntSetting.Builder()
+        .name("base-threshold").description("Deepslate blocks needed for the big red base marker.")
+        .defaultValue(16).range(1, 200).sliderRange(1, 80).build());
 
     private final Setting<Integer> minY = sgGeneral.add(new IntSetting.Builder()
         .name("min-y").description("Lowest Y to scan.")
@@ -87,16 +96,32 @@ public class ClusterBypass extends Module {
         .defaultValue(false).build());
 
     private final Setting<Integer> markerY = sgRender.add(new IntSetting.Builder()
-        .name("marker-y").description("Y level of the chunk marker.")
+        .name("marker-y").description("Y level of the chunk markers.")
         .defaultValue(64).range(-64, 320).sliderRange(-64, 128).build());
 
+    private final Setting<Integer> baseHeight = sgRender.add(new IntSetting.Builder()
+        .name("base-height").description("Height of the red base marker in blocks.")
+        .defaultValue(12).range(1, 100).sliderRange(1, 40).build());
+
     private final Setting<SettingColor> sideColor = sgRender.add(new ColorSetting.Builder()
-        .name("side-color").description("Marker fill color.")
+        .name("side-color").description("Purple marker fill color.")
         .defaultValue(new SettingColor(170, 0, 255, 55)).build());
 
     private final Setting<SettingColor> lineColor = sgRender.add(new ColorSetting.Builder()
-        .name("line-color").description("Marker outline color.")
+        .name("line-color").description("Purple marker outline color.")
         .defaultValue(new SettingColor(255, 80, 255, 180)).build());
+
+    private final Setting<SettingColor> baseSideColor = sgRender.add(new ColorSetting.Builder()
+        .name("base-side-color").description("Red base marker fill color.")
+        .defaultValue(new SettingColor(255, 0, 0, 80)).build());
+
+    private final Setting<SettingColor> baseLineColor = sgRender.add(new ColorSetting.Builder()
+        .name("base-line-color").description("Red base marker outline color.")
+        .defaultValue(new SettingColor(255, 30, 30, 255)).build());
+
+    private final Setting<SettingColor> baseTextColor = sgRender.add(new ColorSetting.Builder()
+        .name("base-text-color").description("Color of the Base chance text.")
+        .defaultValue(new SettingColor(255, 60, 60, 255)).build());
 
     private final Queue<Pending> pending = new ConcurrentLinkedQueue<>();
     private final Queue<Long> unloads = new ConcurrentLinkedQueue<>();
@@ -110,6 +135,12 @@ public class ClusterBypass extends Module {
 
     private static long key(int x, int z) {
         return ((long) x << 32) | (z & 0xFFFFFFFFL);
+    }
+
+    private static int count(Map<Integer, Set<BlockPos>> perSection) {
+        int total = 0;
+        for (Set<BlockPos> s : perSection.values()) total += s.size();
+        return total;
     }
 
     private void clearAll() {
@@ -217,9 +248,7 @@ public class ClusterBypass extends Module {
         }
 
         if (debug.get() && dbgLight5 > 0) {
-            int total = 0;
-            for (Set<BlockPos> s : perSection.values()) total += s.size();
-            info("chunk %d,%d: light5=%d, deepslate=%d", p.chunkX, p.chunkZ, dbgLight5, total);
+            info("chunk %d,%d: light5=%d, deepslate=%d", p.chunkX, p.chunkZ, dbgLight5, count(perSection));
         }
 
         if (perSection.isEmpty()) chunks.remove(k);
@@ -273,15 +302,53 @@ public class ClusterBypass extends Module {
 
             if (Math.abs(cx - pcx) > r || Math.abs(cz - pcz) > r) continue;
 
-            int count = 0;
-            for (Set<BlockPos> s : entry.getValue().values()) count += s.size();
+            int count = count(entry.getValue());
             if (count < minimum.get()) continue;
 
-            AABB marker = new AABB(
-                cx * 16.0, y, cz * 16.0,
-                cx * 16.0 + 16.0, y + 0.5, cz * 16.0 + 16.0
-            );
-            event.renderer.box(marker, sideColor.get(), lineColor.get(), ShapeMode.Both, 0);
+            if (count >= baseThreshold.get()) {
+                AABB big = new AABB(
+                    cx * 16.0, y, cz * 16.0,
+                    cx * 16.0 + 16.0, y + baseHeight.get(), cz * 16.0 + 16.0
+                );
+                event.renderer.box(big, baseSideColor.get(), baseLineColor.get(), ShapeMode.Both, 0);
+            } else {
+                AABB flat = new AABB(
+                    cx * 16.0, y, cz * 16.0,
+                    cx * 16.0 + 16.0, y + 0.5, cz * 16.0 + 16.0
+                );
+                event.renderer.box(flat, sideColor.get(), lineColor.get(), ShapeMode.Both, 0);
+            }
+        }
+    }
+
+    @EventHandler
+    private void onRender2D(Render2DEvent event) {
+        if (mc.level == null || mc.player == null) return;
+
+        int pcx = mc.player.blockPosition().getX() >> 4;
+        int pcz = mc.player.blockPosition().getZ() >> 4;
+        int r = range.get();
+        double y = markerY.get() + baseHeight.get() + 1.5;
+        String label = "Base chance: 80%";
+
+        for (Map.Entry<Long, Map<Integer, Set<BlockPos>>> entry : chunks.entrySet()) {
+            long k = entry.getKey();
+            int cx = (int) (k >> 32);
+            int cz = (int) k;
+
+            if (Math.abs(cx - pcx) > r || Math.abs(cz - pcz) > r) continue;
+            if (count(entry.getValue()) < baseThreshold.get()) continue;
+
+            Vector3d pos = new Vector3d(cx * 16.0 + 8.0, y, cz * 16.0 + 8.0);
+            if (!NametagUtils.to2D(pos, 1.5)) continue;
+
+            NametagUtils.begin(pos);
+            TextRenderer text = TextRenderer.get();
+            text.beginBig();
+            double half = text.getWidth(label) / 2.0;
+            text.render(label, -half, 0, baseTextColor.get(), true);
+            text.end();
+            NametagUtils.end();
         }
     }
 }
