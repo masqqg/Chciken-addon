@@ -3,18 +3,15 @@ package com.example.addon.modules;
 import com.example.addon.AddonTemplate;
 import meteordevelopment.meteorclient.events.game.GameLeftEvent;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
-import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
-import meteordevelopment.meteorclient.renderer.text.TextRenderer;
 import meteordevelopment.meteorclient.settings.BoolSetting;
 import meteordevelopment.meteorclient.settings.ColorSetting;
 import meteordevelopment.meteorclient.settings.IntSetting;
 import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.systems.modules.Module;
-import meteordevelopment.meteorclient.utils.render.NametagUtils;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.core.BlockPos;
@@ -29,7 +26,6 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.phys.AABB;
-import org.joml.Vector3d;
 
 import java.util.ArrayList;
 import java.util.BitSet;
@@ -43,15 +39,11 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.function.Predicate;
 
 /**
- * Two leaks are combined:
- *  1) LIGHT: hidden amethyst clusters have block light 5. Deepslate blocks touching
- *     those points are collected.
- *  2) PALETTE: the block palette of every chunk section is sent as-is. If a section
- *     (at or below palette-max-y, e.g. under Y 0 where light does not work) lists
- *     amethyst in its palette but has no amethyst block in its data, the server hid
- *     them -> each such section adds "palette-points".
- * A chunk with enough points gets a flat purple marker, a lot of points a big red
- * marker with "Base chance: 80%".
+ * Hidden amethyst clusters have block light 5. The deepslate blocks touching those
+ * light points are collected. A chunk with enough of them gets a flat purple marker.
+ * Only Y >= min-y is scanned, because the anti-cheat layer around Y 0 and below fills
+ * everything with fake deepslate.
+ * The palette leak is optional and OFF by default (the anti-cheat fakes palettes too).
  */
 public class ClusterBypass extends Module {
     private static final int CLUSTER_LIGHT = 5;
@@ -87,19 +79,15 @@ public class ClusterBypass extends Module {
         .defaultValue(16).range(1, 32).sliderRange(1, 32).build());
 
     private final Setting<Integer> minimum = sgGeneral.add(new IntSetting.Builder()
-        .name("minimum-points").description("Points needed for the purple marker.")
+        .name("minimum-deepslate").description("Deepslate blocks next to clusters needed to mark a chunk.")
         .defaultValue(12).range(1, 100).sliderRange(1, 60).build());
 
-    private final Setting<Integer> baseThreshold = sgGeneral.add(new IntSetting.Builder()
-        .name("base-threshold").description("Points needed for the big red base marker.")
-        .defaultValue(20).range(1, 200).sliderRange(1, 80).build());
-
     private final Setting<Integer> minY = sgGeneral.add(new IntSetting.Builder()
-        .name("min-y").description("Lowest Y for the light scan.")
-        .defaultValue(-64).range(-64, 320).sliderRange(-64, 128).build());
+        .name("min-y").description("Lowest Y to scan (stay above the anti-cheat layer).")
+        .defaultValue(5).range(-64, 320).sliderRange(-64, 128).build());
 
     private final Setting<Integer> maxY = sgGeneral.add(new IntSetting.Builder()
-        .name("max-y").description("Highest Y for the light scan.")
+        .name("max-y").description("Highest Y to scan.")
         .defaultValue(64).range(-64, 320).sliderRange(-64, 128).build());
 
     private final Setting<Boolean> debug = sgGeneral.add(new BoolSetting.Builder()
@@ -107,44 +95,28 @@ public class ClusterBypass extends Module {
         .defaultValue(false).build());
 
     private final Setting<Boolean> usePalette = sgPalette.add(new BoolSetting.Builder()
-        .name("palette-bypass").description("Also use the section palette leak.")
-        .defaultValue(true).build());
+        .name("palette-bypass").description("Also use the section palette leak (can give false positives).")
+        .defaultValue(false).build());
 
     private final Setting<Integer> paletteMaxY = sgPalette.add(new IntSetting.Builder()
-        .name("palette-max-y").description("Check sections that start at or below this Y.")
-        .defaultValue(0).range(-64, 320).sliderRange(-64, 128).build());
+        .name("palette-max-y").description("Only sections that end at or below this Y are checked.")
+        .defaultValue(-1).range(-64, 320).sliderRange(-64, 128).build());
 
     private final Setting<Integer> palettePoints = sgPalette.add(new IntSetting.Builder()
         .name("palette-points").description("Points added per section with an amethyst palette leak.")
         .defaultValue(12).range(1, 100).sliderRange(1, 40).build());
 
     private final Setting<Integer> markerY = sgRender.add(new IntSetting.Builder()
-        .name("marker-y").description("Y level of the chunk markers.")
+        .name("marker-y").description("Y level of the chunk marker.")
         .defaultValue(64).range(-64, 320).sliderRange(-64, 128).build());
 
-    private final Setting<Integer> baseHeight = sgRender.add(new IntSetting.Builder()
-        .name("base-height").description("Height of the red base marker in blocks.")
-        .defaultValue(12).range(1, 100).sliderRange(1, 40).build());
-
     private final Setting<SettingColor> sideColor = sgRender.add(new ColorSetting.Builder()
-        .name("side-color").description("Purple marker fill color.")
+        .name("side-color").description("Marker fill color.")
         .defaultValue(new SettingColor(170, 0, 255, 55)).build());
 
     private final Setting<SettingColor> lineColor = sgRender.add(new ColorSetting.Builder()
-        .name("line-color").description("Purple marker outline color.")
+        .name("line-color").description("Marker outline color.")
         .defaultValue(new SettingColor(255, 80, 255, 180)).build());
-
-    private final Setting<SettingColor> baseSideColor = sgRender.add(new ColorSetting.Builder()
-        .name("base-side-color").description("Red base marker fill color.")
-        .defaultValue(new SettingColor(255, 0, 0, 80)).build());
-
-    private final Setting<SettingColor> baseLineColor = sgRender.add(new ColorSetting.Builder()
-        .name("base-line-color").description("Red base marker outline color.")
-        .defaultValue(new SettingColor(255, 30, 30, 255)).build());
-
-    private final Setting<SettingColor> baseTextColor = sgRender.add(new ColorSetting.Builder()
-        .name("base-text-color").description("Color of the Base chance text.")
-        .defaultValue(new SettingColor(255, 60, 60, 255)).build());
 
     private final Queue<Pending> pending = new ConcurrentLinkedQueue<>();
     private final Queue<Long> unloads = new ConcurrentLinkedQueue<>();
@@ -154,7 +126,7 @@ public class ClusterBypass extends Module {
 
     public ClusterBypass() {
         super(AddonTemplate.CATEGORY, "cluster-bypass",
-            "Marks chunks with hidden amethyst clusters (light leak + palette leak).");
+            "Marks chunks with many deepslate blocks around hidden amethyst clusters.");
     }
 
     private static long key(int x, int z) {
@@ -265,6 +237,8 @@ public class ClusterBypass extends Module {
                 int n = paletteLeaks(p.chunkX, p.chunkZ);
                 if (n > 0) leaks.put(k, n);
                 else leaks.remove(k);
+            } else {
+                leaks.remove(k);
             }
         }
 
@@ -308,7 +282,7 @@ public class ClusterBypass extends Module {
 
         for (int i = 0; i < chunk.getSectionsCount(); i++) {
             int sectionY = minSection + i;
-            if ((sectionY << 4) > paletteMaxY.get()) continue;
+            if ((sectionY << 4) + 15 > paletteMaxY.get()) continue;
 
             LevelChunkSection section = chunk.getSection(i);
             if (section.hasOnlyAir()) continue;
@@ -351,9 +325,10 @@ public class ClusterBypass extends Module {
             if (!self.canOcclude()) continue;
             dbgLight5++;
 
-            // Collect the deepslate blocks around the cluster
+            // Collect the deepslate blocks around the cluster (only above min-y)
             for (Direction dir : Direction.values()) {
                 BlockPos n = pos.relative(dir);
+                if (n.getY() < lo || n.getY() > hi) continue;
                 if (!mc.level.hasChunkAt(n)) continue;
                 if (mc.level.getBlockState(n).is(Blocks.DEEPSLATE)) out.add(n);
             }
@@ -375,53 +350,13 @@ public class ClusterBypass extends Module {
             int cz = (int) k;
 
             if (Math.abs(cx - pcx) > r || Math.abs(cz - pcz) > r) continue;
+            if (total(k) < minimum.get()) continue;
 
-            int points = total(k);
-            if (points < minimum.get()) continue;
-
-            if (points >= baseThreshold.get()) {
-                AABB big = new AABB(
-                    cx * 16.0, y, cz * 16.0,
-                    cx * 16.0 + 16.0, y + baseHeight.get(), cz * 16.0 + 16.0
-                );
-                event.renderer.box(big, baseSideColor.get(), baseLineColor.get(), ShapeMode.Both, 0);
-            } else {
-                AABB flat = new AABB(
-                    cx * 16.0, y, cz * 16.0,
-                    cx * 16.0 + 16.0, y + 0.5, cz * 16.0 + 16.0
-                );
-                event.renderer.box(flat, sideColor.get(), lineColor.get(), ShapeMode.Both, 0);
-            }
-        }
-    }
-
-    @EventHandler
-    private void onRender2D(Render2DEvent event) {
-        if (mc.level == null || mc.player == null) return;
-
-        int pcx = mc.player.blockPosition().getX() >> 4;
-        int pcz = mc.player.blockPosition().getZ() >> 4;
-        int r = range.get();
-        double y = markerY.get() + baseHeight.get() + 1.5;
-        String label = "Base chance: 80%";
-
-        for (long k : allKeys()) {
-            int cx = (int) (k >> 32);
-            int cz = (int) k;
-
-            if (Math.abs(cx - pcx) > r || Math.abs(cz - pcz) > r) continue;
-            if (total(k) < baseThreshold.get()) continue;
-
-            Vector3d pos = new Vector3d(cx * 16.0 + 8.0, y, cz * 16.0 + 8.0);
-            if (!NametagUtils.to2D(pos, 1.5)) continue;
-
-            NametagUtils.begin(pos);
-            TextRenderer text = TextRenderer.get();
-            text.beginBig();
-            double half = text.getWidth(label) / 2.0;
-            text.render(label, -half, 0, baseTextColor.get(), true);
-            text.end();
-            NametagUtils.end();
+            AABB marker = new AABB(
+                cx * 16.0, y, cz * 16.0,
+                cx * 16.0 + 16.0, y + 0.5, cz * 16.0 + 16.0
+            );
+            event.renderer.box(marker, sideColor.get(), lineColor.get(), ShapeMode.Both, 0);
         }
     }
 }

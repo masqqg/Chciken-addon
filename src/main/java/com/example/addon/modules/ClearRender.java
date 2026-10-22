@@ -22,21 +22,26 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * Sweeps ALL loaded chunks (nearest first, a few chunks per tick) and fills every
+ * Sweeps ALL loaded chunks about once per second (nearest first) and fills every
  * completely sealed air pocket of at most "max-size" blocks with stone
- * (deepslate under Y 0). Client side only. The sweep repeats forever, so blocks
- * the server resends get cleaned again.
+ * (deepslate under Y 0). Client side only.
+ * Sections without any air are skipped, and a time budget per tick keeps it fast
+ * without freezing the game.
  */
 public class ClearRender extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
 
     private final Setting<Integer> chunkRange = sgGeneral.add(new IntSetting.Builder()
         .name("chunk-range").description("Sweep loaded chunks within this many chunks of you.")
-        .defaultValue(16).range(2, 32).sliderRange(2, 32).build());
+        .defaultValue(32).range(2, 32).sliderRange(2, 32).build());
 
-    private final Setting<Integer> chunksPerTick = sgGeneral.add(new IntSetting.Builder()
-        .name("chunks-per-tick").description("How many chunks to process per tick (higher = faster, more lag).")
-        .defaultValue(3).range(1, 16).sliderRange(1, 8).build());
+    private final Setting<Integer> sweepTicks = sgGeneral.add(new IntSetting.Builder()
+        .name("sweep-ticks").description("Start a new full sweep every N ticks (20 = every second).")
+        .defaultValue(20).range(1, 200).sliderRange(1, 100).build());
+
+    private final Setting<Integer> msPerTick = sgGeneral.add(new IntSetting.Builder()
+        .name("ms-per-tick").description("Time budget per tick in milliseconds (higher = faster, more lag).")
+        .defaultValue(20).range(1, 45).sliderRange(1, 45).build());
 
     private final Setting<Integer> maxSize = sgGeneral.add(new IntSetting.Builder()
         .name("max-size").description("Largest sealed pocket (in blocks) that gets filled.")
@@ -51,11 +56,13 @@ public class ClearRender extends Module {
         .defaultValue(64).range(-64, 320).sliderRange(-64, 128).build());
 
     private final Setting<Boolean> debug = sgGeneral.add(new BoolSetting.Builder()
-        .name("debug").description("Print how many blocks were filled per chunk.")
+        .name("debug").description("Print how many blocks each sweep filled.")
         .defaultValue(false).build());
 
     private final List<int[]> queue = new ArrayList<>();
     private int cursor;
+    private int sinceSweep;
+    private int filledThisSweep;
 
     public ClearRender() {
         super(AddonTemplate.CATEGORY, "clear-render",
@@ -66,6 +73,8 @@ public class ClearRender extends Module {
     public void onActivate() {
         queue.clear();
         cursor = 0;
+        sinceSweep = Integer.MAX_VALUE / 2;
+        filledThisSweep = 0;
     }
 
     @Override
@@ -78,15 +87,24 @@ public class ClearRender extends Module {
     private void onTick(TickEvent.Post event) {
         if (mc.level == null || mc.player == null) return;
 
-        if (cursor >= queue.size()) rebuildQueue();
-        if (queue.isEmpty()) return;
+        sinceSweep++;
 
-        int budget = chunksPerTick.get();
-        while (budget > 0 && cursor < queue.size()) {
+        // sweep finished: start the next one once the interval has passed
+        if (cursor >= queue.size()) {
+            if (sinceSweep < sweepTicks.get()) return;
+
+            if (debug.get() && filledThisSweep > 0) info("sweep filled %d blocks", filledThisSweep);
+            filledThisSweep = 0;
+            sinceSweep = 0;
+            rebuildQueue();
+            if (queue.isEmpty()) return;
+        }
+
+        long deadline = System.nanoTime() + msPerTick.get() * 1_000_000L;
+        while (cursor < queue.size() && System.nanoTime() < deadline) {
             int[] c = queue.get(cursor++);
             if (!mc.level.hasChunk(c[0], c[1])) continue;
-            processChunk(c[0], c[1]);
-            budget--;
+            filledThisSweep += processChunk(c[0], c[1]);
         }
     }
 
@@ -109,38 +127,46 @@ public class ClearRender extends Module {
         queue.sort((a, b) -> Integer.compare(a[2], b[2]));
     }
 
-    private void processChunk(int cx, int cz) {
+    private int processChunk(int cx, int cz) {
         LevelChunk chunk = mc.level.getChunk(cx, cz);
         int lo = Math.max(minY.get(), mc.level.getMinY());
         int hi = Math.min(maxY.get(), mc.level.getMaxY() - 1);
         int max = maxSize.get();
         int bx = cx << 4;
         int bz = cz << 4;
+        int minSection = mc.level.getMinY() >> 4;
 
         Set<Long> visited = new HashSet<>();
         Set<Long> queued = new HashSet<>();
         List<BlockPos> toFill = new ArrayList<>();
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
 
-        for (int y = lo; y <= hi; y++) {
-            LevelChunkSection section = chunk.getSection(chunk.getSectionIndex(y));
-            if (section.hasOnlyAir()) {
-                y = ((y >> 4) << 4) + 15; // skip the rest of this empty section
-                continue;
-            }
+        for (int i = 0; i < chunk.getSectionsCount(); i++) {
+            int secMin = (minSection + i) << 4;
+            int secMax = secMin + 15;
+            if (secMax < lo || secMin > hi) continue;
 
-            for (int x = 0; x < 16; x++) {
-                for (int z = 0; z < 16; z++) {
-                    pos.set(bx + x, y, bz + z);
-                    long key = pos.asLong();
-                    if (visited.contains(key)) continue;
-                    if (!chunk.getBlockState(pos).isAir()) continue;
+            LevelChunkSection section = chunk.getSection(i);
+            // fully air = big open space, no air at all = nothing to fill
+            if (section.hasOnlyAir() || !section.maybeHas(st -> st.isAir())) continue;
 
-                    List<BlockPos> pocket = floodFill(pos.immutable(), max, visited);
-                    if (pocket == null) continue;
+            int yStart = Math.max(secMin, lo);
+            int yEnd = Math.min(secMax, hi);
 
-                    for (BlockPos p : pocket) {
-                        if (queued.add(p.asLong())) toFill.add(p);
+            for (int y = yStart; y <= yEnd; y++) {
+                for (int x = 0; x < 16; x++) {
+                    for (int z = 0; z < 16; z++) {
+                        pos.set(bx + x, y, bz + z);
+                        long key = pos.asLong();
+                        if (visited.contains(key)) continue;
+                        if (!chunk.getBlockState(pos).isAir()) continue;
+
+                        List<BlockPos> pocket = floodFill(pos.immutable(), max, visited);
+                        if (pocket == null) continue;
+
+                        for (BlockPos p : pocket) {
+                            if (queued.add(p.asLong())) toFill.add(p);
+                        }
                     }
                 }
             }
@@ -152,9 +178,7 @@ public class ClearRender extends Module {
                 Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE);
         }
 
-        if (debug.get() && !toFill.isEmpty()) {
-            info("chunk %d,%d: filled %d blocks", cx, cz, toFill.size());
-        }
+        return toFill.size();
     }
 
     /**
