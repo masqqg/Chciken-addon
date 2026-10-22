@@ -24,7 +24,7 @@ jobs:
           java-version: 25
 
       - name: Build with Gradle
-        run: ./gradlew build
+        run: ./gradlew build obfuscate
 
       - name: Release
         uses: softprops/action-gh-release@v3
@@ -34,4 +34,4 @@ jobs:
           name: Dev Build
           prerelease: true
           files: |
-            ./build/libs/*.jar
+            ./build/libs/*-obf.jar
