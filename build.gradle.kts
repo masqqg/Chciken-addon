@@ -117,7 +117,7 @@ val proguardObfuscate by tasks.registering(proguard.gradle.ProGuardTask::class) 
     configuration("proguard-rules.pro")
 }
 
-val skidJar = layout.projectDirectory.file("tools/skidfuscator.jar")
+val skidJar = layout.projectDirectory.file("skidfuscator.jar")
 val skidConfig = layout.projectDirectory.file("skidfuscator.hocon")
 val skidLibs = layout.buildDirectory.dir("skid-libs")
 val skidOut = layout.buildDirectory.file("skid/obfuscated.jar")
