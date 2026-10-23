@@ -138,6 +138,7 @@ val skidfuscate by tasks.registering(Exec::class) {
     inputs.file(proguardOut)
     inputs.file(skidConfig)
     outputs.file(skidOut)
+    notCompatibleWithConfigurationCache("runs an external jar with paths resolved at execution time")
 
     doFirst {
         skidOut.get().asFile.parentFile.mkdirs()
