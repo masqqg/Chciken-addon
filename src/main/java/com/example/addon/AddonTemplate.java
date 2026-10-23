@@ -5,9 +5,7 @@ import com.example.addon.commands.CommandExample;
 import com.example.addon.hud.HudExample;
 import com.example.addon.modules.ChickenStorageESP;
 import com.example.addon.modules.ClusterBypass;
-import com.example.addon.modules.PlayerBypass;
 import com.example.addon.modules.ClearRender;
-import com.example.addon.modules.PlayerBypassV2;
 
 import com.mojang.logging.LogUtils;
 import meteordevelopment.meteorclient.addons.GithubRepo;
