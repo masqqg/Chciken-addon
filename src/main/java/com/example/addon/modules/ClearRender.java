@@ -47,6 +47,11 @@ public class ClearRender extends Module {
         .name("max-size").description("Largest sealed pocket (in blocks) that gets filled.")
         .defaultValue(5).range(1, 32).sliderRange(1, 16).build());
 
+    private final Setting<Integer> maxBlocksPerTick = sgGeneral.add(new IntSetting.Builder()
+        .name("max-blocks-per-tick").description("Max blocks actually replaced per tick. " +
+            "Keep this low - placing too many blocks in one tick looks like fast block breaking to some anti-cheats.")
+        .defaultValue(6).range(1, 200).sliderRange(1, 60).build());
+
     private final Setting<Integer> minY = sgGeneral.add(new IntSetting.Builder()
         .name("min-y").description("Lowest Y to scan.")
         .defaultValue(-64).range(-64, 320).sliderRange(-64, 128).build());
@@ -100,11 +105,15 @@ public class ClearRender extends Module {
             if (queue.isEmpty()) return;
         }
 
+        int blockBudget = maxBlocksPerTick.get();
         long deadline = System.nanoTime() + msPerTick.get() * 1_000_000L;
-        while (cursor < queue.size() && System.nanoTime() < deadline) {
+        while (cursor < queue.size() && blockBudget > 0 && System.nanoTime() < deadline) {
             int[] c = queue.get(cursor++);
             if (!mc.level.hasChunk(c[0], c[1])) continue;
-            filledThisSweep += processChunk(c[0], c[1]);
+
+            int placed = processChunk(c[0], c[1], blockBudget);
+            filledThisSweep += placed;
+            blockBudget -= placed;
         }
     }
 
@@ -127,7 +136,7 @@ public class ClearRender extends Module {
         queue.sort((a, b) -> Integer.compare(a[2], b[2]));
     }
 
-    private int processChunk(int cx, int cz) {
+    private int processChunk(int cx, int cz, int blockBudget) {
         LevelChunk chunk = mc.level.getChunk(cx, cz);
         int lo = Math.max(minY.get(), mc.level.getMinY());
         int hi = Math.min(maxY.get(), mc.level.getMaxY() - 1);
@@ -172,13 +181,17 @@ public class ClearRender extends Module {
             }
         }
 
+        int placed = 0;
         for (BlockPos p : toFill) {
+            if (placed >= blockBudget) break; // rest gets filled on a later sweep
+
             Block block = p.getY() < 0 ? Blocks.DEEPSLATE : Blocks.STONE;
             mc.level.setBlock(p, block.defaultBlockState(),
                 Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE);
+            placed++;
         }
 
-        return toFill.size();
+        return placed;
     }
 
     /**

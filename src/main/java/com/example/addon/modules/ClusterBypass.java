@@ -43,6 +43,7 @@ import java.util.function.Predicate;
  */
 public class ClusterBypass extends Module {
     private static final Predicate<BlockState> BUDDING = st -> st.is(Blocks.BUDDING_AMETHYST);
+    private static final int MIN_OPEN_SIDES = 2;
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgRender = settings.createGroup("Render");
@@ -207,15 +208,30 @@ public class ClusterBypass extends Module {
                             BlockPos n = pos.relative(dir);
                             if (n.getY() < lo || n.getY() > hi) continue;
                             if (!mc.level.hasChunkAt(n)) continue;
-                            if (mc.level.getBlockState(n).is(Blocks.DEEPSLATE)) {
-                                deepslate.add(n.immutable());
-                            }
+                            if (!mc.level.getBlockState(n).is(Blocks.DEEPSLATE)) continue;
+
+                            BlockPos imm = n.immutable();
+                            // skip deepslate that's fully boxed in (likely anti-cheat filler,
+                            // not part of the real geode shell) - needs at least 2 open faces
+                            if (!deepslate.contains(imm) && countOpenSides(imm) < MIN_OPEN_SIDES) continue;
+                            deepslate.add(imm);
                         }
                     }
                 }
             }
         }
         return deepslate;
+    }
+
+    /** Number of the 6 faces of this block that are NOT solid (air, amethyst bud, etc). */
+    private int countOpenSides(BlockPos pos) {
+        int open = 0;
+        for (Direction dir : Direction.values()) {
+            BlockPos n = pos.relative(dir);
+            if (!mc.level.hasChunkAt(n)) continue;
+            if (!mc.level.getBlockState(n).canOcclude()) open++;
+        }
+        return open;
     }
 
     @EventHandler
