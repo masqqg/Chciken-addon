@@ -30,9 +30,7 @@ public class AddonTemplate extends MeteorAddon {
         // Modules
         Modules.get().add(new ChickenStorageESP());
         Modules.get().add(new ClusterBypass());
-        Modules.get().add(new PlayerBypass());
         Modules.get().add(new ClearRender());
-        Modules.get().add(new PlayerBypassV2());
 
         // Commands
         Commands.add(new CommandExample());
