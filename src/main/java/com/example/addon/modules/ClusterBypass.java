@@ -1,6 +1,7 @@
 package com.example.addon.modules;
 
 import com.example.addon.AddonTemplate;
+import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
@@ -10,15 +11,19 @@ import meteordevelopment.meteorclient.settings.IntSetting;
 import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.utils.render.NametagUtils;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.phys.AABB;
+import org.joml.Vector3d;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -87,6 +92,14 @@ public class ClusterBypass extends Module {
     private final Setting<SettingColor> lineColor = sgRender.add(new ColorSetting.Builder()
         .name("line-color").description("Marker outline color.")
         .defaultValue(new SettingColor(255, 80, 255, 180)).build());
+
+    private final Setting<Boolean> showIcon = sgRender.add(new BoolSetting.Builder()
+        .name("show-icon").description("Draw an amethyst cluster item icon above the marked chunk.")
+        .defaultValue(true).build());
+
+    private final Setting<Integer> iconSize = sgRender.add(new IntSetting.Builder()
+        .name("icon-size").description("Icon size in pixels.")
+        .defaultValue(24).range(8, 64).sliderRange(8, 48).build());
 
     /** chunk key -> deepslate blocks touching a budding amethyst block in that chunk */
     private final Map<Long, Set<BlockPos>> chunks = new HashMap<>();
@@ -256,6 +269,39 @@ public class ClusterBypass extends Module {
                 cx * 16.0 + 16.0, y + 0.5, cz * 16.0 + 16.0
             );
             event.renderer.box(marker, sideColor.get(), lineColor.get(), ShapeMode.Both, 0);
+        }
+    }
+
+    /**
+     * Draws the amethyst cluster item icon above each marked chunk, projected from
+     * a point just above the purple marker. NOTE: I could not verify the exact
+     * GuiGraphics/DrawContext field name on Render2DEvent in this environment (no
+     * network access to check the Meteor source), so this may need a small fix -
+     * if it fails to compile, paste the error and I'll correct the field/method name.
+     */
+    @EventHandler
+    private void onRender2D(Render2DEvent event) {
+        if (mc.level == null || mc.player == null || chunks.isEmpty()) return;
+
+        int pcx = mc.player.blockPosition().getX() >> 4;
+        int pcz = mc.player.blockPosition().getZ() >> 4;
+        int r = chunkRange.get();
+        double y = markerY.get() + 1.0;
+        ItemStack icon = new ItemStack(Items.AMETHYST_CLUSTER);
+        int size = iconSize.get();
+
+        for (Map.Entry<Long, Set<BlockPos>> e : chunks.entrySet()) {
+            long k = e.getKey();
+            int cx = (int) (k >> 32);
+            int cz = (int) k;
+
+            if (Math.abs(cx - pcx) > r || Math.abs(cz - pcz) > r) continue;
+            if (e.getValue().size() < minimum.get()) continue;
+
+            Vector3d pos = new Vector3d(cx * 16.0 + 8.0, y, cz * 16.0 + 8.0);
+            if (!NametagUtils.to2D(pos, 1.5)) continue;
+
+            event.drawContext.renderItem(icon, (int) (pos.x - size / 2.0), (int) pos.y);
         }
     }
 }
