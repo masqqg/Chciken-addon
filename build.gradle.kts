@@ -1,4 +1,3 @@
-
 plugins {
     alias(libs.plugins.fabric.loom)
 }
@@ -24,17 +23,18 @@ repositories {
 }
 
 dependencies {
+    // Fabric
     minecraft(libs.minecraft)
     mappings(loom.officialMojangMappings())
     modImplementation(libs.fabric.loader)
+
+    // Meteor
     modImplementation(libs.meteor.client)
 }
 
 java {
     toolchain {
-        languageVersion.set(
-            JavaLanguageVersion.of(libs.versions.jdk.get().toInt())
-        )
+        languageVersion.set(JavaLanguageVersion.of(libs.versions.jdk.get().toInt()))
     }
 }
 
@@ -47,10 +47,14 @@ fun toMinecraftCompat(version: String): String {
     }
 
     val pre = Regex("""^(\d{2})\.([1-9]\d*)-pre[-.](\d+)$""")
-    if (pre.matches(version)) return version.replace("-pre-", "-pre.")
+    pre.matchEntire(version)?.let {
+        return version.replace("-pre-", "-pre.")
+    }
 
     val rc = Regex("""^(\d{2})\.([1-9]\d*)-rc[-.](\d+)$""")
-    if (rc.matches(version)) return version.replace("-rc-", "-rc.")
+    rc.matchEntire(version)?.let {
+        return version.replace("-rc-", "-rc.")
+    }
 
     return version
 }
@@ -60,11 +64,10 @@ tasks {
         val propertyMap = mapOf(
             "version" to project.version,
             "minecraft_version" to toMinecraftCompat(libs.versions.minecraft.get()),
-            "jdk_version" to libs.versions.jdk.get()
+            "jdk_version" to libs.versions.jdk.get(),
         )
 
         inputs.properties(propertyMap)
-
         filesMatching("fabric.mod.json") {
             expand(propertyMap)
         }
@@ -72,7 +75,6 @@ tasks {
 
     jar {
         inputs.property("archivesName", archivesBaseName)
-
         val licenseName = "LICENSE_$archivesBaseName"
 
         from("LICENSE") {
@@ -82,7 +84,10 @@ tasks {
 
     withType<JavaCompile>().configureEach {
         options.compilerArgs.addAll(
-            listOf("-Xlint:deprecation", "-Xlint:unchecked")
+            listOf(
+                "-Xlint:deprecation",
+                "-Xlint:unchecked"
+            )
         )
     }
 }
