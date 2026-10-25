@@ -12,6 +12,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 
@@ -173,12 +174,18 @@ public class ClearRender extends Module {
         }
 
         for (BlockPos p : toFill) {
-            Block block = p.getY() < 0 ? Blocks.DEEPSLATE : Blocks.STONE;
+            Block block = fillBlockFor(p);
             mc.level.setBlock(p, block.defaultBlockState(),
                 Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE);
         }
 
         return toFill.size();
+    }
+
+    /** Netherrack in the Nether, stone/deepslate everywhere else (deepslate under Y 0). */
+    private Block fillBlockFor(BlockPos p) {
+        if (mc.level.dimension() == Level.NETHER) return Blocks.NETHERRACK;
+        return p.getY() < 0 ? Blocks.DEEPSLATE : Blocks.STONE;
     }
 
     /**
