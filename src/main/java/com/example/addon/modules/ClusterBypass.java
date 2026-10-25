@@ -101,6 +101,23 @@ public class ClusterBypass extends Module {
         .name("icon-size").description("Icon size in pixels.")
         .defaultValue(24).range(8, 64).sliderRange(8, 48).build());
 
+    private final Setting<Boolean> showGrowthArea = sgRender.add(new BoolSetting.Builder()
+        .name("show-growth-area").description("Also mark the full square of chunks around a " +
+            "found chunk that fall within simulation distance (where its buds can still grow).")
+        .defaultValue(true).build());
+
+    private final Setting<Integer> growthRadius = sgRender.add(new IntSetting.Builder()
+        .name("growth-radius").description("Simulation distance in chunks (radius, not a + shape - the full square, corners included).")
+        .defaultValue(5).range(1, 16).sliderRange(1, 10).build());
+
+    private final Setting<SettingColor> growthSideColor = sgRender.add(new ColorSetting.Builder()
+        .name("growth-side-color").description("Growth-area square fill color.")
+        .defaultValue(new SettingColor(255, 150, 220, 25)).build());
+
+    private final Setting<SettingColor> growthLineColor = sgRender.add(new ColorSetting.Builder()
+        .name("growth-line-color").description("Growth-area square outline color.")
+        .defaultValue(new SettingColor(255, 180, 230, 90)).build());
+
     /** chunk key -> deepslate blocks touching a budding amethyst block in that chunk */
     private final Map<Long, Set<BlockPos>> chunks = new HashMap<>();
     private final List<int[]> queue = new ArrayList<>();
@@ -256,6 +273,36 @@ public class ClusterBypass extends Module {
         int r = chunkRange.get();
         double y = markerY.get();
 
+        // draw the light-pink growth squares first, so the purple marker draws on top
+        if (showGrowthArea.get()) {
+            int gr = growthRadius.get();
+            Set<Long> drawn = new HashSet<>();
+
+            for (Map.Entry<Long, Set<BlockPos>> e : chunks.entrySet()) {
+                if (e.getValue().size() < minimum.get()) continue;
+
+                long k = e.getKey();
+                int cx = (int) (k >> 32);
+                int cz = (int) k;
+                if (Math.abs(cx - pcx) > r + gr || Math.abs(cz - pcz) > r + gr) continue;
+
+                for (int dx = -gr; dx <= gr; dx++) {
+                    for (int dz = -gr; dz <= gr; dz++) {
+                        int ncx = cx + dx;
+                        int ncz = cz + dz;
+                        long nk = key(ncx, ncz);
+                        if (!drawn.add(nk)) continue; // already drawn for another nearby cluster
+
+                        AABB area = new AABB(
+                            ncx * 16.0, y - 0.05, ncz * 16.0,
+                            ncx * 16.0 + 16.0, y - 0.05 + 0.3, ncz * 16.0 + 16.0
+                        );
+                        event.renderer.box(area, growthSideColor.get(), growthLineColor.get(), ShapeMode.Both, 0);
+                    }
+                }
+            }
+        }
+
         for (Map.Entry<Long, Set<BlockPos>> e : chunks.entrySet()) {
             long k = e.getKey();
             int cx = (int) (k >> 32);
@@ -273,11 +320,16 @@ public class ClusterBypass extends Module {
     }
 
     /**
-     * Draws the amethyst cluster item icon above each marked chunk, projected from
-     * a point just above the purple marker. NOTE: I could not verify the exact
-     * GuiGraphics/DrawContext field name on Render2DEvent in this environment (no
-     * network access to check the Meteor source), so this may need a small fix -
-     * if it fails to compile, paste the error and I'll correct the field/method name.
+     * Tiles the amethyst cluster item icon across the purple marker's projected
+     * top face, so the floor looks covered in that image instead of a flat color.
+     * This is a 2D screen-space tiling over the box's projected bounding area, not
+     * a true perspective-correct 3D texture (that needs lower-level buffer/texture
+     * code I can't verify without network access to Meteor's source) - but it
+     * covers the marker with the icon the way you asked.
+     *
+     * NOTE: I could not verify the exact GuiGraphics/DrawContext field name on
+     * Render2DEvent in this environment. If this fails to compile, paste the
+     * error and I'll fix the field/method name.
      */
     @EventHandler
     private void onRender2D(Render2DEvent event) {
@@ -286,9 +338,9 @@ public class ClusterBypass extends Module {
         int pcx = mc.player.blockPosition().getX() >> 4;
         int pcz = mc.player.blockPosition().getZ() >> 4;
         int r = chunkRange.get();
-        double y = markerY.get() + 1.0;
+        double y = markerY.get() + 0.3;
         ItemStack icon = new ItemStack(Items.AMETHYST_CLUSTER);
-        int size = iconSize.get();
+        int size = Math.max(8, iconSize.get());
 
         for (Map.Entry<Long, Set<BlockPos>> e : chunks.entrySet()) {
             long k = e.getKey();
@@ -298,10 +350,31 @@ public class ClusterBypass extends Module {
             if (Math.abs(cx - pcx) > r || Math.abs(cz - pcz) > r) continue;
             if (e.getValue().size() < minimum.get()) continue;
 
-            Vector3d pos = new Vector3d(cx * 16.0 + 8.0, y, cz * 16.0 + 8.0);
-            if (!NametagUtils.to2D(pos, 1.5)) continue;
+            // project the 4 corners of the chunk's top face to screen space
+            double[][] corners = {
+                {cx * 16.0, cz * 16.0}, {cx * 16.0 + 16.0, cz * 16.0},
+                {cx * 16.0, cz * 16.0 + 16.0}, {cx * 16.0 + 16.0, cz * 16.0 + 16.0}
+            };
 
-            event.drawContext.renderItem(icon, (int) (pos.x - size / 2.0), (int) pos.y);
+            double minX = Double.MAX_VALUE, maxX = -Double.MAX_VALUE;
+            double minY = Double.MAX_VALUE, maxY = -Double.MAX_VALUE;
+            boolean visible = false;
+
+            for (double[] c : corners) {
+                Vector3d p = new Vector3d(c[0], y, c[1]);
+                if (!NametagUtils.to2D(p, 1.5)) continue;
+                visible = true;
+                minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+                minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
+            }
+            if (!visible) continue;
+
+            // tile the icon across the projected rectangle
+            for (double px = minX; px < maxX; px += size) {
+                for (double py = minY; py < maxY; py += size) {
+                    event.drawContext.renderItem(icon, (int) px, (int) py);
+                }
+            }
         }
     }
 }
