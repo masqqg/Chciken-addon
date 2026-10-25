@@ -16,6 +16,7 @@ import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.Blocks;
@@ -35,16 +36,8 @@ import java.util.function.Predicate;
 
 /**
  * Finds amethyst geodes by directly scanning loaded chunk block data for
- * BUDDING_AMETHYST blocks (the "seed" block a cluster grows from - only 1-2 of
- * its faces are amethyst, the rest of its neighbors are deepslate). For every
- * budding amethyst block found, its DEEPSLATE neighbors are collected into a
- * per-chunk set (so the same deepslate block is never counted twice even if two
- * budding amethyst blocks share it). A chunk whose deepslate count reaches
- * "minimum-deepslate" gets a flat purple marker.
- *
- * This replaced the old light=5 heuristic, which only worked for clusters the
- * server was actively hiding and gave wrong counts on normal, visible geodes.
- * Scanning the block data directly is exact: it counts what is really there.
+ * Marks chunks using a separate block-light heuristic. The original scanChunk()
+ * block-state/deepslate method is retained unchanged for reference/future use.
  */
 public class ClusterBypass extends Module {
     private static final Predicate<BlockState> BUDDING = st -> st.is(Blocks.BUDDING_AMETHYST);
@@ -58,8 +51,8 @@ public class ClusterBypass extends Module {
         .defaultValue(16).range(1, 32).sliderRange(1, 32).build());
 
     private final Setting<Integer> minimum = sgGeneral.add(new IntSetting.Builder()
-        .name("minimum-deepslate").description("Deepslate blocks touching budding amethyst needed to mark a chunk.")
-        .defaultValue(12).range(1, 200).sliderRange(1, 60).build());
+        .name("min-buds").description("Light-data bud candidates needed to mark a chunk.")
+        .defaultValue(17).range(1, 200).sliderRange(1, 60).build());
 
     private final Setting<Integer> minY = sgGeneral.add(new IntSetting.Builder()
         .name("min-y").description("Lowest Y to scan.")
@@ -120,6 +113,7 @@ public class ClusterBypass extends Module {
         .defaultValue(new SettingColor(255, 180, 230, 90)).build());
 
     /** chunk key -> deepslate blocks touching a budding amethyst block in that chunk */
+    /** chunk key -> unique positions classified as light-data bud candidates */
     private final Map<Long, Set<BlockPos>> chunks = new HashMap<>();
     private final List<int[]> queue = new ArrayList<>();
     private int cursor;
@@ -127,7 +121,7 @@ public class ClusterBypass extends Module {
 
     public ClusterBypass() {
         super(AddonTemplate.CATEGORY, "cluster-bypass",
-            "Marks chunks with amethyst geodes by counting deepslate next to budding amethyst.");
+            "Marks chunks when block-light bud candidates reach the configured minimum.");
     }
 
     private static long key(int x, int z) {
@@ -168,13 +162,15 @@ public class ClusterBypass extends Module {
             if (!mc.level.hasChunk(c[0], c[1])) continue;
 
             long k = key(c[0], c[1]);
-            Set<BlockPos> found = scanChunk(c[0], c[1]);
+            // Keep the original block-state scan intact; the active result now comes
+            // from the separate light-data heuristic below.
+            Set<BlockPos> found = scanLightData(c[0], c[1]);
 
             if (debug.get()) {
                 Set<BlockPos> old = chunks.get(k);
                 int oldSize = old == null ? 0 : old.size();
                 if (found.size() != oldSize) {
-                    info("chunk %d,%d: deepslate=%d", c[0], c[1], found.size());
+                    info("chunk %d,%d: bud-candidates=%d", c[0], c[1], found.size());
                 }
             }
 
@@ -205,6 +201,46 @@ public class ClusterBypass extends Module {
             int cz = (int) (long) k;
             return Math.abs(cx - pcx) > r || Math.abs(cz - pcz) > r || !mc.level.hasChunk(cx, cz);
         });
+    }
+
+    /**
+     * Separate light-data heuristic. Amethyst growth blocks emit block-light levels
+     * 1, 2, 4 and 5. A position with one of those levels is counted only when all
+     * four horizontal neighbors are occluding (closed), matching the requested
+     * four-direction shell check. This is a heuristic, not proof of a real bud:
+     * overlapping light and server-side light masking can cause false results.
+     */
+    private Set<BlockPos> scanLightData(int cx, int cz) {
+        Set<BlockPos> buds = new HashSet<>();
+        int lo = Math.max(minY.get(), mc.level.getMinY());
+        int hi = Math.min(maxY.get(), mc.level.getMaxY() - 1);
+        int bx = cx << 4;
+        int bz = cz << 4;
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+        Direction[] horizontal = {Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST};
+
+        for (int y = lo; y <= hi; y++) {
+            for (int x = 0; x < 16; x++) {
+                for (int z = 0; z < 16; z++) {
+                    pos.set(bx + x, y, bz + z);
+                    int light = mc.level.getBrightness(LightLayer.BLOCK, pos);
+                    if (light != 1 && light != 2 && light != 4 && light != 5) continue;
+
+                    boolean closed = true;
+                    for (Direction dir : horizontal) {
+                        BlockPos neighbor = pos.relative(dir);
+                        if (!mc.level.hasChunkAt(neighbor)
+                            || !mc.level.getBlockState(neighbor).canOcclude()) {
+                            closed = false;
+                            break;
+                        }
+                    }
+
+                    if (closed) buds.add(pos.immutable());
+                }
+            }
+        }
+        return buds;
     }
 
     private Set<BlockPos> scanChunk(int cx, int cz) {
