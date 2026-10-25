@@ -107,8 +107,9 @@ public class ClusterBypass extends Module {
         .defaultValue(true).build());
 
     private final Setting<Integer> growthRadius = sgRender.add(new IntSetting.Builder()
-        .name("growth-radius").description("Simulation distance in chunks (radius, not a + shape - the full square, corners included).")
-        .defaultValue(5).range(1, 16).sliderRange(1, 10).build());
+        .name("growth-radius").description("Radius in chunks - square side = 2*radius+1. " +
+            "1 = 3x3 (9 chunks), 5 = 11x11 (121 chunks). Full square, corners included, not a + shape.")
+        .defaultValue(1).range(1, 16).sliderRange(1, 10).build());
 
     private final Setting<SettingColor> growthSideColor = sgRender.add(new ColorSetting.Builder()
         .name("growth-side-color").description("Growth-area square fill color.")
