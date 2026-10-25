@@ -259,7 +259,8 @@ public class SpawnerFlag extends Module {
 
         for (int x = pcx - radius; x <= pcx + radius; x++) {
             for (int z = pcz - radius; z <= pcz + radius; z++) {
-                LevelChunk chunk = mc.level.getChunkSource().getChunk(x, z);
+                if (!mc.level.hasChunk(x, z)) continue;
+                LevelChunk chunk = mc.level.getChunk(x, z);
                 if (chunk != null) scanChunk(chunk);
             }
         }
@@ -270,7 +271,7 @@ public class SpawnerFlag extends Module {
         if (sections == null) return;
 
         ChunkPos cp = chunk.getPos();
-        int bottom = chunk.getMinBuildHeight();
+        int bottom = mc.level.getMinY();
         Set<Long> found = new HashSet<>();
 
         for (int i = 0; i < sections.length; i++) {
@@ -359,7 +360,7 @@ public class SpawnerFlag extends Module {
     private boolean boxLoaded(int x, int z) {
         for (int cx = (x - BOX_BELOW) >> 4; cx <= (x + BOX_ABOVE) >> 4; cx++) {
             for (int cz = (z - BOX_BELOW) >> 4; cz <= (z + BOX_ABOVE) >> 4; cz++) {
-                if (mc.level.getChunkSource().getChunk(cx, cz) == null) return false;
+                if (!mc.level.hasChunk(cx, cz)) return false;
             }
         }
         return true;
@@ -547,7 +548,7 @@ public class SpawnerFlag extends Module {
     private String saveKey() {
         var entry = mc.getCurrentServer();
         String server = entry != null ? entry.ip : "singleplayer";
-        return server + "|" + mc.level.dimension().location();
+        return server + "|" + mc.level.dimension().toString();
     }
 
     private void markDirty() {
