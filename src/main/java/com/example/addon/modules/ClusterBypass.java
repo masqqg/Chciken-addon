@@ -47,11 +47,7 @@ public class ClusterBypass extends Module {
 
     private final Setting<Integer> minimum = sgGeneral.add(new IntSetting.Builder()
         .name("min-buds").description("Light-data bud candidates needed to mark a chunk.")
-        .defaultValue(13).range(1, 200).sliderRange(1, 60).build());
-
-    private final Setting<Integer> minClosedSides = sgGeneral.add(new IntSetting.Builder()
-        .name("min-closed-sides").description("Minimum closed horizontal sides (north, south, east, west) for a light position to count as a bud.")
-        .defaultValue(4).range(1, 4).sliderRange(1, 4).build());
+        .defaultValue(17).range(1, 200).sliderRange(1, 60).build());
 
     private final Setting<Integer> minY = sgGeneral.add(new IntSetting.Builder()
         .name("min-y").description("Lowest Y to scan.")
@@ -102,6 +98,27 @@ public class ClusterBypass extends Module {
     private final Setting<SettingColor> growthLineColor = sgRender.add(new ColorSetting.Builder()
         .name("growth-line-color").description("Growth-area square outline color.")
         .defaultValue(new SettingColor(255, 180, 230, 90)).build());
+
+    private final Setting<Boolean> showBudBoxes = sgRender.add(new BoolSetting.Builder()
+        .name("show-bud-boxes").description("Draw a box on each individual estimated bud position.")
+        .defaultValue(true).build());
+
+    private final Setting<SettingColor> budSideColor = sgRender.add(new ColorSetting.Builder()
+        .name("bud-side-color").description("Per-block bud box fill color.")
+        .defaultValue(new SettingColor(200, 60, 255, 60)).build());
+
+    private final Setting<SettingColor> budLineColor = sgRender.add(new ColorSetting.Builder()
+        .name("bud-line-color").description("Per-block bud box outline color.")
+        .defaultValue(new SettingColor(230, 120, 255, 220)).build());
+
+    private final Setting<Boolean> showTracers = sgRender.add(new BoolSetting.Builder()
+        .name("show-tracers").description("Draw a line from you to each estimated bud position. " +
+            "Can get messy with many results, off tends to look cleaner.")
+        .defaultValue(false).build());
+
+    private final Setting<SettingColor> tracerColor = sgRender.add(new ColorSetting.Builder()
+        .name("tracer-color").description("Tracer line color.")
+        .defaultValue(new SettingColor(230, 120, 255, 160)).build());
 
     /** chunk key -> deepslate blocks touching a budding amethyst block in that chunk */
     /** chunk key -> unique positions classified as light-data bud candidates */
@@ -196,10 +213,11 @@ public class ClusterBypass extends Module {
 
     /**
      * Separate light-data heuristic. Amethyst growth blocks emit block-light levels
-     * 1, 2, 4 and 5. A position with one of those levels is counted only when all
-     * four horizontal neighbors are occluding (closed), matching the requested
-     * four-direction shell check. This is a heuristic, not proof of a real bud:
-     * overlapping light and server-side light masking can cause false results.
+     * 1, 2, 4 and 5. A position with one of those levels is only counted when ALL
+     * 6 neighbors (not just the 4 horizontal ones) are solid/occluding. If any
+     * neighbor is lava, water, or open air (a cave), the position is rejected -
+     * that light is coming from a real nearby cave/fluid, not a hidden bud.
+     * This is still a heuristic, not proof of a real bud.
      */
     private Set<BlockPos> scanLightData(int cx, int cz) {
         Set<BlockPos> buds = new HashSet<>();
@@ -208,7 +226,6 @@ public class ClusterBypass extends Module {
         int bx = cx << 4;
         int bz = cz << 4;
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
-        Direction[] horizontal = {Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST};
 
         for (int y = lo; y <= hi; y++) {
             for (int x = 0; x < 16; x++) {
@@ -217,18 +234,21 @@ public class ClusterBypass extends Module {
                     int light = mc.level.getBrightness(LightLayer.BLOCK, pos);
                     if (light != 1 && light != 2 && light != 4 && light != 5) continue;
 
-                    int closedSides = 0;
-                    for (Direction dir : horizontal) {
+                    boolean closed = true;
+                    for (Direction dir : Direction.values()) {
                         BlockPos neighbor = pos.relative(dir);
-                        if (mc.level.hasChunkAt(neighbor)
-                            && mc.level.getBlockState(neighbor).canOcclude()) {
-                            closedSides++;
+                        if (!mc.level.hasChunkAt(neighbor)) { closed = false; break; }
+
+                        BlockState neighborState = mc.level.getBlockState(neighbor);
+                        // reject: open cave air, lava, water next to this position
+                        if (!neighborState.canOcclude()
+                            || !neighborState.getFluidState().isEmpty()) {
+                            closed = false;
+                            break;
                         }
                     }
 
-                    if (closedSides >= minClosedSides.get()) {
-                        buds.add(pos.immutable());
-                    }
+                    if (closed) buds.add(pos.immutable());
                 }
             }
         }
@@ -345,6 +365,35 @@ public class ClusterBypass extends Module {
                 cx * 16.0 + 16.0, y + 0.5, cz * 16.0 + 16.0
             );
             event.renderer.box(marker, sideColor.get(), lineColor.get(), ShapeMode.Both, 0);
+        }
+
+        // per-block boxes and tracers for each estimated bud position
+        if (showBudBoxes.get() || showTracers.get()) {
+            double ex = mc.player.getX();
+            double ey = mc.player.getEyeY();
+            double ez = mc.player.getZ();
+
+            for (Map.Entry<Long, Set<BlockPos>> e : chunks.entrySet()) {
+                long k = e.getKey();
+                int cx = (int) (k >> 32);
+                int cz = (int) k;
+
+                if (Math.abs(cx - pcx) > r || Math.abs(cz - pcz) > r) continue;
+                if (e.getValue().size() < minimum.get()) continue;
+
+                for (BlockPos pos : e.getValue()) {
+                    if (showBudBoxes.get()) {
+                        event.renderer.box(new AABB(pos), budSideColor.get(), budLineColor.get(), ShapeMode.Both, 0);
+                    }
+                    if (showTracers.get()) {
+                        event.renderer.line(
+                            ex, ey, ez,
+                            pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5,
+                            tracerColor.get()
+                        );
+                    }
+                }
+            }
         }
     }
 
