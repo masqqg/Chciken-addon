@@ -1,7 +1,6 @@
 package com.example.addon.modules;
 
 import com.example.addon.AddonTemplate;
-import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
@@ -11,20 +10,16 @@ import meteordevelopment.meteorclient.settings.IntSetting;
 import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.systems.modules.Module;
-import meteordevelopment.meteorclient.utils.render.NametagUtils;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.LightLayer;
-import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.phys.AABB;
-import org.joml.Vector3d;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -85,14 +80,6 @@ public class ClusterBypass extends Module {
     private final Setting<SettingColor> lineColor = sgRender.add(new ColorSetting.Builder()
         .name("line-color").description("Marker outline color.")
         .defaultValue(new SettingColor(255, 80, 255, 180)).build());
-
-    private final Setting<Boolean> showIcon = sgRender.add(new BoolSetting.Builder()
-        .name("show-icon").description("Draw an amethyst cluster item icon above the marked chunk.")
-        .defaultValue(true).build());
-
-    private final Setting<Integer> iconSize = sgRender.add(new IntSetting.Builder()
-        .name("icon-size").description("Icon size in pixels.")
-        .defaultValue(24).range(8, 64).sliderRange(8, 48).build());
 
     private final Setting<Boolean> showGrowthArea = sgRender.add(new BoolSetting.Builder()
         .name("show-growth-area").description("Also mark the full square of chunks around a " +
@@ -356,62 +343,4 @@ public class ClusterBypass extends Module {
         }
     }
 
-    /**
-     * Tiles the amethyst cluster item icon across the purple marker's projected
-     * top face, so the floor looks covered in that image instead of a flat color.
-     * This is a 2D screen-space tiling over the box's projected bounding area, not
-     * a true perspective-correct 3D texture (that needs lower-level buffer/texture
-     * code I can't verify without network access to Meteor's source) - but it
-     * covers the marker with the icon the way you asked.
-     *
-     * NOTE: I could not verify the exact GuiGraphics/DrawContext field name on
-     * Render2DEvent in this environment. If this fails to compile, paste the
-     * error and I'll fix the field/method name.
-     */
-    @EventHandler
-    private void onRender2D(Render2DEvent event) {
-        if (mc.level == null || mc.player == null || chunks.isEmpty()) return;
-
-        int pcx = mc.player.blockPosition().getX() >> 4;
-        int pcz = mc.player.blockPosition().getZ() >> 4;
-        int r = chunkRange.get();
-        double y = markerY.get() + 0.3;
-        ItemStack icon = new ItemStack(Items.AMETHYST_CLUSTER);
-        int size = Math.max(8, iconSize.get());
-
-        for (Map.Entry<Long, Set<BlockPos>> e : chunks.entrySet()) {
-            long k = e.getKey();
-            int cx = (int) (k >> 32);
-            int cz = (int) k;
-
-            if (Math.abs(cx - pcx) > r || Math.abs(cz - pcz) > r) continue;
-            if (e.getValue().size() < minimum.get()) continue;
-
-            // project the 4 corners of the chunk's top face to screen space
-            double[][] corners = {
-                {cx * 16.0, cz * 16.0}, {cx * 16.0 + 16.0, cz * 16.0},
-                {cx * 16.0, cz * 16.0 + 16.0}, {cx * 16.0 + 16.0, cz * 16.0 + 16.0}
-            };
-
-            double minX = Double.MAX_VALUE, maxX = -Double.MAX_VALUE;
-            double minY = Double.MAX_VALUE, maxY = -Double.MAX_VALUE;
-            boolean visible = false;
-
-            for (double[] c : corners) {
-                Vector3d p = new Vector3d(c[0], y, c[1]);
-                if (!NametagUtils.to2D(p, 1.5)) continue;
-                visible = true;
-                minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
-                minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
-            }
-            if (!visible) continue;
-
-            // tile the icon across the projected rectangle
-            for (double px = minX; px < maxX; px += size) {
-                for (double py = minY; py < maxY; py += size) {
-                    event.drawContext.renderItem(icon, (int) px, (int) py);
-                }
-            }
-        }
-    }
 }
