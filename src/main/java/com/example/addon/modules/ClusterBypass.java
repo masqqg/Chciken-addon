@@ -30,17 +30,17 @@ import java.util.Set;
 import java.util.function.Predicate;
 
 /**
- * DÜZELTILMIŞ VERSIYON
+ * Cluster Bypass - 1.21.11 / Meteor (derleme hatası düzeltilmiş sürüm)
  *
- * 1. dosyadaki çalışan light-data tespit mantığını kullanır:
- * - Block light seviyesi 1, 2, 4 veya 5 olan pozisyonlar aranır.
- * - Pozisyonun 4 yatay komşusu da kapalı/occluding ise bud adayı sayılır.
- *
- * 2. dosyadaki render özellikleri korunur:
- * - Chunk marker
- * - Growth area
- * - Bud box
- * - Tracer
+ * DÜZELTMELER:
+ * 1) Long -> int cast hatası giderildi (rebuildQueue içindeki removeIf lambda'sı).
+ *    Chunk key çözümlemesi artık chunkX(long)/chunkZ(long) helper'ları ile yapılıyor,
+ *    hiçbir yerde kutu tipi Long doğrudan int'e cast edilmiyor.
+ * 2) Deprecated hasChunkAt(BlockPos) çağrıları kaldırıldı -> loaded(BlockPos)
+ *    helper'ı hasChunk(int, int) kullanıyor (derleme uyarısı üretmez).
+ * 3) Tespit mantığı 1. dosyadaki ÇALIŞAN light-data mantığı:
+ *    block light 1/2/4/5 + 4 yatay komşu kapalı => bud adayı.
+ *    (require-stone / require-moss gibi aşırı filtreler yok, o yüzden geode buluyor.)
  */
 public class ClusterBypass extends Module {
 
@@ -50,145 +50,87 @@ public class ClusterBypass extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgRender = settings.createGroup("Render");
 
-    // =========================
-    // General
-    // =========================
+    // ===================== General =====================
 
     private final Setting<Integer> chunkRange = sgGeneral.add(new IntSetting.Builder()
-            .name("chunk-range")
-            .description("Scan loaded chunks within this many chunks of you.")
-            .defaultValue(16)
-            .range(1, 32)
-            .sliderRange(1, 32)
-            .build());
+            .name("chunk-range").description("Scan loaded chunks within this many chunks of you.")
+            .defaultValue(16).range(1, 32).sliderRange(1, 32).build());
 
     private final Setting<Integer> minimum = sgGeneral.add(new IntSetting.Builder()
-            .name("min-buds")
-            .description("Light-data bud candidates needed to mark a chunk.")
-            .defaultValue(17)
-            .range(1, 200)
-            .sliderRange(1, 60)
-            .build());
+            .name("min-buds").description("Light-data bud candidates needed to mark a chunk.")
+            .defaultValue(17).range(1, 200).sliderRange(1, 60).build());
 
     private final Setting<Integer> minY = sgGeneral.add(new IntSetting.Builder()
-            .name("min-y")
-            .description("Lowest Y to scan.")
-            .defaultValue(-64)
-            .range(-64, 320)
-            .sliderRange(-64, 128)
-            .build());
+            .name("min-y").description("Lowest Y to scan.")
+            .defaultValue(-64).range(-64, 320).sliderRange(-64, 128).build());
 
     private final Setting<Integer> maxY = sgGeneral.add(new IntSetting.Builder()
-            .name("max-y")
-            .description("Highest Y to scan.")
-            .defaultValue(64)
-            .range(-64, 320)
-            .sliderRange(-64, 128)
-            .build());
+            .name("max-y").description("Highest Y to scan.")
+            .defaultValue(64).range(-64, 320).sliderRange(-64, 128).build());
 
     private final Setting<Integer> sweepTicks = sgGeneral.add(new IntSetting.Builder()
-            .name("sweep-ticks")
-            .description("Rescan loaded chunks every N ticks.")
-            .defaultValue(20)
-            .range(1, 200)
-            .sliderRange(5, 100)
-            .build());
+            .name("sweep-ticks").description("Rescan loaded chunks every N ticks.")
+            .defaultValue(20).range(1, 200).sliderRange(5, 100).build());
 
     private final Setting<Integer> msPerTick = sgGeneral.add(new IntSetting.Builder()
-            .name("ms-per-tick")
-            .description("Scan time budget per tick in milliseconds.")
-            .defaultValue(8)
-            .range(1, 40)
-            .sliderRange(1, 40)
-            .build());
+            .name("ms-per-tick").description("Scan time budget per tick in milliseconds.")
+            .defaultValue(8).range(1, 40).sliderRange(1, 40).build());
 
     private final Setting<Boolean> debug = sgGeneral.add(new BoolSetting.Builder()
-            .name("debug")
-            .description("Print bud candidate counts in chat when a chunk changes.")
-            .defaultValue(false)
-            .build());
+            .name("debug").description("Print bud candidate counts in chat when a chunk changes.")
+            .defaultValue(false).build());
 
-    // =========================
-    // Render
-    // =========================
+    // ===================== Render =====================
 
     private final Setting<Integer> markerY = sgRender.add(new IntSetting.Builder()
-            .name("marker-y")
-            .description("Y level of the chunk marker.")
-            .defaultValue(64)
-            .range(-64, 320)
-            .sliderRange(-64, 128)
-            .build());
+            .name("marker-y").description("Y level of the chunk marker.")
+            .defaultValue(64).range(-64, 320).sliderRange(-64, 128).build());
 
     private final Setting<SettingColor> sideColor = sgRender.add(new ColorSetting.Builder()
-            .name("side-color")
-            .description("Marker fill color.")
-            .defaultValue(new SettingColor(170, 0, 255, 55))
-            .build());
+            .name("side-color").description("Marker fill color.")
+            .defaultValue(new SettingColor(170, 0, 255, 55)).build());
 
     private final Setting<SettingColor> lineColor = sgRender.add(new ColorSetting.Builder()
-            .name("line-color")
-            .description("Marker outline color.")
-            .defaultValue(new SettingColor(255, 80, 255, 180))
-            .build());
+            .name("line-color").description("Marker outline color.")
+            .defaultValue(new SettingColor(255, 80, 255, 180)).build());
 
     private final Setting<Boolean> showGrowthArea = sgRender.add(new BoolSetting.Builder()
-            .name("show-growth-area")
-            .description("Also mark the full square of chunks around a found chunk that fall within simulation distance.")
-            .defaultValue(true)
-            .build());
+            .name("show-growth-area").description("Also mark the square of chunks around a found chunk.")
+            .defaultValue(true).build());
 
     private final Setting<Integer> growthRadius = sgRender.add(new IntSetting.Builder()
-            .name("growth-radius")
-            .description("Radius in chunks - square side = 2*radius+1.")
-            .defaultValue(1)
-            .range(1, 16)
-            .sliderRange(1, 10)
-            .build());
+            .name("growth-radius").description("Radius in chunks - square side = 2*radius+1.")
+            .defaultValue(1).range(1, 16).sliderRange(1, 10).build());
 
     private final Setting<SettingColor> growthSideColor = sgRender.add(new ColorSetting.Builder()
-            .name("growth-side-color")
-            .description("Growth-area square fill color.")
-            .defaultValue(new SettingColor(255, 150, 220, 25))
-            .build());
+            .name("growth-side-color").description("Growth-area square fill color.")
+            .defaultValue(new SettingColor(255, 150, 220, 25)).build());
 
     private final Setting<SettingColor> growthLineColor = sgRender.add(new ColorSetting.Builder()
-            .name("growth-line-color")
-            .description("Growth-area square outline color.")
-            .defaultValue(new SettingColor(255, 180, 230, 90))
-            .build());
+            .name("growth-line-color").description("Growth-area square outline color.")
+            .defaultValue(new SettingColor(255, 180, 230, 90)).build());
 
     private final Setting<Boolean> showBudBoxes = sgRender.add(new BoolSetting.Builder()
-            .name("show-bud-boxes")
-            .description("Draw a box on each individual estimated bud position.")
-            .defaultValue(true)
-            .build());
+            .name("show-bud-boxes").description("Draw a box on each estimated bud position.")
+            .defaultValue(true).build());
 
     private final Setting<SettingColor> budSideColor = sgRender.add(new ColorSetting.Builder()
-            .name("bud-side-color")
-            .description("Per-block bud box fill color.")
-            .defaultValue(new SettingColor(200, 60, 255, 60))
-            .build());
+            .name("bud-side-color").description("Per-block bud box fill color.")
+            .defaultValue(new SettingColor(200, 60, 255, 60)).build());
 
     private final Setting<SettingColor> budLineColor = sgRender.add(new ColorSetting.Builder()
-            .name("bud-line-color")
-            .description("Per-block bud box outline color.")
-            .defaultValue(new SettingColor(230, 120, 255, 220))
-            .build());
+            .name("bud-line-color").description("Per-block bud box outline color.")
+            .defaultValue(new SettingColor(230, 120, 255, 220)).build());
 
     private final Setting<Boolean> showTracers = sgRender.add(new BoolSetting.Builder()
-            .name("show-tracers")
-            .description("Draw a line from you to each estimated bud position.")
-            .defaultValue(false)
-            .build());
+            .name("show-tracers").description("Draw a line from you to each estimated bud position.")
+            .defaultValue(false).build());
 
     private final Setting<SettingColor> tracerColor = sgRender.add(new ColorSetting.Builder()
-            .name("tracer-color")
-            .description("Tracer line color.")
-            .defaultValue(new SettingColor(230, 120, 255, 160))
-            .build());
+            .name("tracer-color").description("Tracer line color.")
+            .defaultValue(new SettingColor(230, 120, 255, 160)).build());
 
-    /** chunk key -> unique positions classified as light-data bud candidates */
+    /** chunk key -> light-data bud candidate positions */
     private final Map<Long, Set<BlockPos>> chunks = new HashMap<>();
 
     private final List<int[]> queue = new ArrayList<>();
@@ -200,9 +142,26 @@ public class ClusterBypass extends Module {
                 "Marks chunks when block-light bud candidates reach the configured minimum.");
     }
 
+    // ===================== key helpers (Long cast hatası olmaması için) =====================
+
     private static long key(int x, int z) {
         return ((long) x << 32) | (z & 0xFFFFFFFFL);
     }
+
+    private static int chunkX(long k) {
+        return (int) (k >> 32);
+    }
+
+    private static int chunkZ(long k) {
+        return (int) k;
+    }
+
+    /** Deprecated hasChunkAt(BlockPos) yerine uyarısız kontrol. */
+    private boolean loaded(BlockPos pos) {
+        return mc.level != null && mc.level.hasChunk(pos.getX() >> 4, pos.getZ() >> 4);
+    }
+
+    // ===================== lifecycle =====================
 
     @Override
     public void onActivate() {
@@ -280,23 +239,27 @@ public class ClusterBypass extends Module {
 
         queue.sort((a, b) -> Integer.compare(a[2], b[2]));
 
+        // HATA BURADAYDI: k bir Long, doğrudan (int) k yapılamaz.
         chunks.keySet().removeIf(k -> {
-            int cx = (int) (k >> 32);
-            int cz = (int) k;
+            long key = k;                       // unbox -> primitive long
+            int cx = chunkX(key);
+            int cz = chunkZ(key);
 
-            return Math.abs(cx - pcx) > r || Math.abs(cz - pcz) > r || !mc.level.hasChunk(cx, cz);
+            return Math.abs(cx - pcx) > r
+                    || Math.abs(cz - pcz) > r
+                    || !mc.level.hasChunk(cx, cz);
         });
     }
 
+    // ===================== detection (1. dosyadaki çalışan mantık) =====================
+
     /**
-     * DÜZELTILMIŞ LIGHT DATA TARAMASI
+     * Block light 1 / 2 / 4 / 5 olan ve 4 yatay komşusu da kapalı (occluding)
+     * pozisyonlar bud adayı sayılır.
      *
-     * 1. dosyadaki çalışan mantık:
-     * - Block light 1, 2, 4 veya 5 olan pozisyonlar aranır.
-     * - 4 yatay komşu da occluding/closed ise pozisyon bud adayı sayılır.
+     * small bud = 1, medium bud = 2, large bud = 4, cluster = 5
      *
-     * Bu yöntem kesin kanıt değildir, light leak heuristicidir.
-     * Ama 1. dosyada ametist alanını gösteren mantık buydu.
+     * Bu bir light-leak heuristicidir, kesin kanıt değildir.
      */
     private Set<BlockPos> scanLightData(int cx, int cz) {
         Set<BlockPos> buds = new HashSet<>();
@@ -316,9 +279,6 @@ public class ClusterBypass extends Module {
                     pos.set(bx + x, y, bz + z);
 
                     int light = mc.level.getBrightness(LightLayer.BLOCK, pos);
-
-                    // Amethyst growth light levels:
-                    // small bud = 1, medium bud = 2, large bud = 4, cluster = 5
                     if (light != 1 && light != 2 && light != 4 && light != 5) continue;
 
                     boolean closed = true;
@@ -326,16 +286,13 @@ public class ClusterBypass extends Module {
                     for (Direction dir : horizontal) {
                         BlockPos neighbor = pos.relative(dir);
 
-                        if (!mc.level.hasChunkAt(neighbor)
-                                || !mc.level.getBlockState(neighbor).canOcclude()) {
+                        if (!loaded(neighbor) || !mc.level.getBlockState(neighbor).canOcclude()) {
                             closed = false;
                             break;
                         }
                     }
 
-                    if (closed) {
-                        buds.add(pos.immutable());
-                    }
+                    if (closed) buds.add(pos.immutable());
                 }
             }
         }
@@ -343,10 +300,8 @@ public class ClusterBypass extends Module {
         return buds;
     }
 
-    /**
-     * Eski block-state/deepslate tabanlı tarama.
-     * Referans olarak bırakıldı, aktif tespit scanLightData() içindedir.
-     */
+    // ===================== eski block-state taraması (referans, aktif değil) =====================
+
     private Set<BlockPos> scanChunk(int cx, int cz) {
         Set<BlockPos> deepslate = new HashSet<>();
 
@@ -388,7 +343,7 @@ public class ClusterBypass extends Module {
                             BlockPos n = pos.relative(dir);
 
                             if (n.getY() < lo || n.getY() > hi) continue;
-                            if (!mc.level.hasChunkAt(n)) continue;
+                            if (!loaded(n)) continue;
                             if (!mc.level.getBlockState(n).is(Blocks.DEEPSLATE)) continue;
 
                             BlockPos imm = n.immutable();
@@ -405,20 +360,20 @@ public class ClusterBypass extends Module {
         return deepslate;
     }
 
-    /** Number of the 6 faces of this block that are NOT solid. */
     private int countOpenSides(BlockPos pos) {
         int open = 0;
 
         for (Direction dir : Direction.values()) {
             BlockPos n = pos.relative(dir);
 
-            if (!mc.level.hasChunkAt(n)) continue;
-
+            if (!loaded(n)) continue;
             if (!mc.level.getBlockState(n).canOcclude()) open++;
         }
 
         return open;
     }
+
+    // ===================== render =====================
 
     @EventHandler
     private void onRender(Render3DEvent event) {
@@ -430,7 +385,7 @@ public class ClusterBypass extends Module {
 
         double y = markerY.get();
 
-        // Growth area
+        // growth area (altta kalır)
         if (showGrowthArea.get()) {
             int gr = growthRadius.get();
             Set<Long> drawn = new HashSet<>();
@@ -439,8 +394,8 @@ public class ClusterBypass extends Module {
                 if (e.getValue().size() < minimum.get()) continue;
 
                 long k = e.getKey();
-                int cx = (int) (k >> 32);
-                int cz = (int) k;
+                int cx = chunkX(k);
+                int cz = chunkZ(k);
 
                 if (Math.abs(cx - pcx) > r + gr || Math.abs(cz - pcz) > r + gr) continue;
 
@@ -450,7 +405,6 @@ public class ClusterBypass extends Module {
                         int ncz = cz + dz;
 
                         long nk = key(ncx, ncz);
-
                         if (!drawn.add(nk)) continue;
 
                         AABB area = new AABB(
@@ -464,11 +418,11 @@ public class ClusterBypass extends Module {
             }
         }
 
-        // Main chunk marker
+        // ana chunk marker (üstte)
         for (Map.Entry<Long, Set<BlockPos>> e : chunks.entrySet()) {
             long k = e.getKey();
-            int cx = (int) (k >> 32);
-            int cz = (int) k;
+            int cx = chunkX(k);
+            int cz = chunkZ(k);
 
             if (Math.abs(cx - pcx) > r || Math.abs(cz - pcz) > r) continue;
             if (e.getValue().size() < minimum.get()) continue;
@@ -481,7 +435,7 @@ public class ClusterBypass extends Module {
             event.renderer.box(marker, sideColor.get(), lineColor.get(), ShapeMode.Both, 0);
         }
 
-        // Bud boxes + tracers
+        // bud box + tracer
         if (showBudBoxes.get() || showTracers.get()) {
             double ex = mc.player.getX();
             double ey = mc.player.getEyeY();
@@ -489,8 +443,8 @@ public class ClusterBypass extends Module {
 
             for (Map.Entry<Long, Set<BlockPos>> e : chunks.entrySet()) {
                 long k = e.getKey();
-                int cx = (int) (k >> 32);
-                int cz = (int) k;
+                int cx = chunkX(k);
+                int cz = chunkZ(k);
 
                 if (Math.abs(cx - pcx) > r || Math.abs(cz - pcz) > r) continue;
                 if (e.getValue().size() < minimum.get()) continue;
