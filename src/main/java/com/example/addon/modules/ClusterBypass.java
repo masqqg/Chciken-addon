@@ -1,6 +1,7 @@
 package com.example.addon.modules;
 
 import com.example.addon.AddonTemplate;
+import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
@@ -10,16 +11,20 @@ import meteordevelopment.meteorclient.settings.IntSetting;
 import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.utils.render.NametagUtils;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.LightLayer;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.phys.AABB;
+import org.joml.Vector3d;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -46,34 +51,8 @@ public class ClusterBypass extends Module {
         .defaultValue(16).range(1, 32).sliderRange(1, 32).build());
 
     private final Setting<Integer> minimum = sgGeneral.add(new IntSetting.Builder()
-        .name("min-buds").description("Total buds found (by either method below) needed to mark a chunk.")
-        .defaultValue(12).range(1, 200).sliderRange(1, 60).build());
-
-    private final Setting<Boolean> useClosedSidesMethod = sgGeneral.add(new BoolSetting.Builder()
-        .name("closed-sides-method").description("Method A: a light-5 position counts as a bud " +
-            "if at least X of its 6 sides are closed (occluding, no lava/water/cave-air).")
-        .defaultValue(true).build());
-
-    private final Setting<Integer> closedSidesRequired = sgGeneral.add(new IntSetting.Builder()
-        .name("closed-sides-required").description("How many of the 6 sides must be closed (method A).")
-        .defaultValue(4).range(1, 6).sliderRange(1, 6).build());
-
-    private final Setting<Boolean> useNeighborLightMethod = sgGeneral.add(new BoolSetting.Builder()
-        .name("neighbor-light-method").description("Method B: a light-5 position counts as a bud " +
-            "if at least one of its solid neighbors also carries block light (confirms a real " +
-            "light gradient from a hidden source, instead of one stray lit block).")
-        .defaultValue(true).build());
-
-    private final Setting<Boolean> requireStone = sgGeneral.add(new BoolSetting.Builder()
-        .name("require-stone").description("Only count a light-5 position if the block itself is " +
-            "plain STONE. Filters out false positives on mixed cave terrain (dirt, sand, gravel, tuff...).")
-        .defaultValue(true).build());
-
-    private final Setting<Boolean> requireMossNearby = sgGeneral.add(new BoolSetting.Builder()
-        .name("require-moss-nearby").description("Only count a position if a moss block is one of " +
-            "its 6 neighbors. Filters out surface/forest canopy false positives, but also means a " +
-            "real geode with no nearby lush cave/moss won't be found - turn off if that happens.")
-        .defaultValue(true).build());
+        .name("min-buds").description("Light-data bud candidates needed to mark a chunk.")
+        .defaultValue(17).range(1, 200).sliderRange(1, 60).build());
 
     private final Setting<Integer> minY = sgGeneral.add(new IntSetting.Builder()
         .name("min-y").description("Lowest Y to scan.")
@@ -107,6 +86,14 @@ public class ClusterBypass extends Module {
         .name("line-color").description("Marker outline color.")
         .defaultValue(new SettingColor(255, 80, 255, 180)).build());
 
+    private final Setting<Boolean> showIcon = sgRender.add(new BoolSetting.Builder()
+        .name("show-icon").description("Draw an amethyst cluster item icon above the marked chunk.")
+        .defaultValue(true).build());
+
+    private final Setting<Integer> iconSize = sgRender.add(new IntSetting.Builder()
+        .name("icon-size").description("Icon size in pixels.")
+        .defaultValue(24).range(8, 64).sliderRange(8, 48).build());
+
     private final Setting<Boolean> showGrowthArea = sgRender.add(new BoolSetting.Builder()
         .name("show-growth-area").description("Also mark the full square of chunks around a " +
             "found chunk that fall within simulation distance (where its buds can still grow).")
@@ -124,27 +111,6 @@ public class ClusterBypass extends Module {
     private final Setting<SettingColor> growthLineColor = sgRender.add(new ColorSetting.Builder()
         .name("growth-line-color").description("Growth-area square outline color.")
         .defaultValue(new SettingColor(255, 180, 230, 90)).build());
-
-    private final Setting<Boolean> showBudBoxes = sgRender.add(new BoolSetting.Builder()
-        .name("show-bud-boxes").description("Draw a box on each individual estimated bud position.")
-        .defaultValue(true).build());
-
-    private final Setting<SettingColor> budSideColor = sgRender.add(new ColorSetting.Builder()
-        .name("bud-side-color").description("Per-block bud box fill color.")
-        .defaultValue(new SettingColor(200, 60, 255, 60)).build());
-
-    private final Setting<SettingColor> budLineColor = sgRender.add(new ColorSetting.Builder()
-        .name("bud-line-color").description("Per-block bud box outline color.")
-        .defaultValue(new SettingColor(230, 120, 255, 220)).build());
-
-    private final Setting<Boolean> showTracers = sgRender.add(new BoolSetting.Builder()
-        .name("show-tracers").description("Draw a line from you to each estimated bud position. " +
-            "Can get messy with many results, off tends to look cleaner.")
-        .defaultValue(false).build());
-
-    private final Setting<SettingColor> tracerColor = sgRender.add(new ColorSetting.Builder()
-        .name("tracer-color").description("Tracer line color.")
-        .defaultValue(new SettingColor(230, 120, 255, 160)).build());
 
     /** chunk key -> deepslate blocks touching a budding amethyst block in that chunk */
     /** chunk key -> unique positions classified as light-data bud candidates */
@@ -238,22 +204,11 @@ public class ClusterBypass extends Module {
     }
 
     /**
-     * Light-data heuristic scanning each 16-wide chunk column. A hidden bud leaks
-     * block light level 5 into the solid stone around it. A light-5 position is
-     * only ever considered if the position itself is solid/occluding and has no
-     * fluid (so a real lit cave block or lava/water never gets scanned at all).
-     * From there, EITHER method below can qualify it as "1 bud":
-     *
-     *  Method A (closed-sides): at least "closed-sides-required" (1-6, default 4)
-     *  of its 6 neighbors are also solid/occluding with no fluid - i.e. it's
-     *  mostly or fully boxed in stone, not next to an open cave.
-     *
-     *  Method B (neighbor-light): at least one of its solid, non-fluid neighbors
-     *  ALSO carries block light > 0 - a real hidden light source leaks into more
-     *  than one surrounding block (a gradient), a single stray lit block usually
-     *  doesn't.
-     *
-     * A position found by either method is still just 1 bud (Set dedupes it).
+     * Separate light-data heuristic. Amethyst growth blocks emit block-light levels
+     * 1, 2, 4 and 5. A position with one of those levels is counted only when all
+     * four horizontal neighbors are occluding (closed), matching the requested
+     * four-direction shell check. This is a heuristic, not proof of a real bud:
+     * overlapping light and server-side light masking can cause false results.
      */
     private Set<BlockPos> scanLightData(int cx, int cz) {
         Set<BlockPos> buds = new HashSet<>();
@@ -261,10 +216,8 @@ public class ClusterBypass extends Module {
         int hi = Math.min(maxY.get(), mc.level.getMaxY() - 1);
         int bx = cx << 4;
         int bz = cz << 4;
-        int required = closedSidesRequired.get();
-        boolean methodA = useClosedSidesMethod.get();
-        boolean methodB = useNeighborLightMethod.get();
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+        Direction[] horizontal = {Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST};
 
         for (int y = lo; y <= hi; y++) {
             for (int x = 0; x < 16; x++) {
@@ -273,39 +226,17 @@ public class ClusterBypass extends Module {
                     int light = mc.level.getBrightness(LightLayer.BLOCK, pos);
                     if (light != 1 && light != 2 && light != 4 && light != 5) continue;
 
-                    BlockState self = mc.level.getBlockState(pos);
-                    if (requireStone.get()) {
-                        if (!self.is(Blocks.STONE)) continue; // only plain stone, filters mixed cave terrain
-                    } else if (!self.canOcclude() || !self.getFluidState().isEmpty()) {
-                        continue;
-                    }
-
-                    int closedSides = 0;
-                    boolean neighborHasLight = false;
-                    boolean mossNearby = false;
-
-                    for (Direction dir : Direction.values()) {
-                        BlockPos n = pos.relative(dir);
-                        if (!mc.level.hasChunkAt(n)) continue;
-
-                        BlockState neighborState = mc.level.getBlockState(n);
-                        if (neighborState.is(Blocks.MOSS_BLOCK)) mossNearby = true;
-
-                        boolean solidNoFluid = neighborState.canOcclude() && neighborState.getFluidState().isEmpty();
-                        if (solidNoFluid) {
-                            closedSides++;
-                            if (methodB && mc.level.getBrightness(LightLayer.BLOCK, n) > 0) {
-                                neighborHasLight = true;
-                            }
+                    boolean closed = true;
+                    for (Direction dir : horizontal) {
+                        BlockPos neighbor = pos.relative(dir);
+                        if (!mc.level.hasChunkAt(neighbor)
+                            || !mc.level.getBlockState(neighbor).canOcclude()) {
+                            closed = false;
+                            break;
                         }
                     }
 
-                    if (requireMossNearby.get() && !mossNearby) continue;
-
-                    boolean passesA = methodA && closedSides >= required;
-                    boolean passesB = methodB && neighborHasLight;
-
-                    if (passesA || passesB) buds.add(pos.immutable());
+                    if (closed) buds.add(pos.immutable());
                 }
             }
         }
@@ -423,35 +354,64 @@ public class ClusterBypass extends Module {
             );
             event.renderer.box(marker, sideColor.get(), lineColor.get(), ShapeMode.Both, 0);
         }
+    }
 
-        // per-block boxes and tracers for each estimated bud position
-        if (showBudBoxes.get() || showTracers.get()) {
-            double ex = mc.player.getX();
-            double ey = mc.player.getEyeY();
-            double ez = mc.player.getZ();
+    /**
+     * Tiles the amethyst cluster item icon across the purple marker's projected
+     * top face, so the floor looks covered in that image instead of a flat color.
+     * This is a 2D screen-space tiling over the box's projected bounding area, not
+     * a true perspective-correct 3D texture (that needs lower-level buffer/texture
+     * code I can't verify without network access to Meteor's source) - but it
+     * covers the marker with the icon the way you asked.
+     *
+     * NOTE: I could not verify the exact GuiGraphics/DrawContext field name on
+     * Render2DEvent in this environment. If this fails to compile, paste the
+     * error and I'll fix the field/method name.
+     */
+    @EventHandler
+    private void onRender2D(Render2DEvent event) {
+        if (mc.level == null || mc.player == null || chunks.isEmpty()) return;
 
-            for (Map.Entry<Long, Set<BlockPos>> e : chunks.entrySet()) {
-                long k = e.getKey();
-                int cx = (int) (k >> 32);
-                int cz = (int) k;
+        int pcx = mc.player.blockPosition().getX() >> 4;
+        int pcz = mc.player.blockPosition().getZ() >> 4;
+        int r = chunkRange.get();
+        double y = markerY.get() + 0.3;
+        ItemStack icon = new ItemStack(Items.AMETHYST_CLUSTER);
+        int size = Math.max(8, iconSize.get());
 
-                if (Math.abs(cx - pcx) > r || Math.abs(cz - pcz) > r) continue;
-                if (e.getValue().size() < minimum.get()) continue;
+        for (Map.Entry<Long, Set<BlockPos>> e : chunks.entrySet()) {
+            long k = e.getKey();
+            int cx = (int) (k >> 32);
+            int cz = (int) k;
 
-                for (BlockPos pos : e.getValue()) {
-                    if (showBudBoxes.get()) {
-                        event.renderer.box(new AABB(pos), budSideColor.get(), budLineColor.get(), ShapeMode.Both, 0);
-                    }
-                    if (showTracers.get()) {
-                        event.renderer.line(
-                            ex, ey, ez,
-                            pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5,
-                            tracerColor.get()
-                        );
-                    }
+            if (Math.abs(cx - pcx) > r || Math.abs(cz - pcz) > r) continue;
+            if (e.getValue().size() < minimum.get()) continue;
+
+            // project the 4 corners of the chunk's top face to screen space
+            double[][] corners = {
+                {cx * 16.0, cz * 16.0}, {cx * 16.0 + 16.0, cz * 16.0},
+                {cx * 16.0, cz * 16.0 + 16.0}, {cx * 16.0 + 16.0, cz * 16.0 + 16.0}
+            };
+
+            double minX = Double.MAX_VALUE, maxX = -Double.MAX_VALUE;
+            double minY = Double.MAX_VALUE, maxY = -Double.MAX_VALUE;
+            boolean visible = false;
+
+            for (double[] c : corners) {
+                Vector3d p = new Vector3d(c[0], y, c[1]);
+                if (!NametagUtils.to2D(p, 1.5)) continue;
+                visible = true;
+                minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+                minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
+            }
+            if (!visible) continue;
+
+            // tile the icon across the projected rectangle
+            for (double px = minX; px < maxX; px += size) {
+                for (double py = minY; py < maxY; py += size) {
+                    event.drawContext.renderItem(icon, (int) px, (int) py);
                 }
             }
         }
     }
-
 }
