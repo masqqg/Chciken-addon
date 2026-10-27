@@ -46,8 +46,23 @@ public class ClusterBypass extends Module {
         .defaultValue(16).range(1, 32).sliderRange(1, 32).build());
 
     private final Setting<Integer> minimum = sgGeneral.add(new IntSetting.Builder()
-        .name("min-buds").description("Light-data bud candidates needed to mark a chunk.")
-        .defaultValue(17).range(1, 200).sliderRange(1, 60).build());
+        .name("min-buds").description("Total buds found (by either method below) needed to mark a chunk.")
+        .defaultValue(12).range(1, 200).sliderRange(1, 60).build());
+
+    private final Setting<Boolean> useClosedSidesMethod = sgGeneral.add(new BoolSetting.Builder()
+        .name("closed-sides-method").description("Method A: a light-5 position counts as a bud " +
+            "if at least X of its 6 sides are closed (occluding, no lava/water/cave-air).")
+        .defaultValue(true).build());
+
+    private final Setting<Integer> closedSidesRequired = sgGeneral.add(new IntSetting.Builder()
+        .name("closed-sides-required").description("How many of the 6 sides must be closed (method A).")
+        .defaultValue(4).range(1, 6).sliderRange(1, 6).build());
+
+    private final Setting<Boolean> useNeighborLightMethod = sgGeneral.add(new BoolSetting.Builder()
+        .name("neighbor-light-method").description("Method B: a light-5 position counts as a bud " +
+            "if at least one of its solid neighbors also carries block light (confirms a real " +
+            "light gradient from a hidden source, instead of one stray lit block).")
+        .defaultValue(true).build());
 
     private final Setting<Integer> minY = sgGeneral.add(new IntSetting.Builder()
         .name("min-y").description("Lowest Y to scan.")
@@ -212,12 +227,22 @@ public class ClusterBypass extends Module {
     }
 
     /**
-     * Separate light-data heuristic. Amethyst growth blocks emit block-light levels
-     * 1, 2, 4 and 5. A position with one of those levels is only counted when ALL
-     * 6 neighbors (not just the 4 horizontal ones) are solid/occluding. If any
-     * neighbor is lava, water, or open air (a cave), the position is rejected -
-     * that light is coming from a real nearby cave/fluid, not a hidden bud.
-     * This is still a heuristic, not proof of a real bud.
+     * Light-data heuristic scanning each 16-wide chunk column. A hidden bud leaks
+     * block light level 5 into the solid stone around it. A light-5 position is
+     * only ever considered if the position itself is solid/occluding and has no
+     * fluid (so a real lit cave block or lava/water never gets scanned at all).
+     * From there, EITHER method below can qualify it as "1 bud":
+     *
+     *  Method A (closed-sides): at least "closed-sides-required" (1-6, default 4)
+     *  of its 6 neighbors are also solid/occluding with no fluid - i.e. it's
+     *  mostly or fully boxed in stone, not next to an open cave.
+     *
+     *  Method B (neighbor-light): at least one of its solid, non-fluid neighbors
+     *  ALSO carries block light > 0 - a real hidden light source leaks into more
+     *  than one surrounding block (a gradient), a single stray lit block usually
+     *  doesn't.
+     *
+     * A position found by either method is still just 1 bud (Set dedupes it).
      */
     private Set<BlockPos> scanLightData(int cx, int cz) {
         Set<BlockPos> buds = new HashSet<>();
@@ -225,6 +250,9 @@ public class ClusterBypass extends Module {
         int hi = Math.min(maxY.get(), mc.level.getMaxY() - 1);
         int bx = cx << 4;
         int bz = cz << 4;
+        int required = closedSidesRequired.get();
+        boolean methodA = useClosedSidesMethod.get();
+        boolean methodB = useNeighborLightMethod.get();
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
 
         for (int y = lo; y <= hi; y++) {
@@ -234,21 +262,30 @@ public class ClusterBypass extends Module {
                     int light = mc.level.getBrightness(LightLayer.BLOCK, pos);
                     if (light != 1 && light != 2 && light != 4 && light != 5) continue;
 
-                    boolean closed = true;
-                    for (Direction dir : Direction.values()) {
-                        BlockPos neighbor = pos.relative(dir);
-                        if (!mc.level.hasChunkAt(neighbor)) { closed = false; break; }
+                    BlockState self = mc.level.getBlockState(pos);
+                    if (!self.canOcclude() || !self.getFluidState().isEmpty()) continue;
 
-                        BlockState neighborState = mc.level.getBlockState(neighbor);
-                        // reject: open cave air, lava, water next to this position
-                        if (!neighborState.canOcclude()
-                            || !neighborState.getFluidState().isEmpty()) {
-                            closed = false;
-                            break;
+                    int closedSides = 0;
+                    boolean neighborHasLight = false;
+
+                    for (Direction dir : Direction.values()) {
+                        BlockPos n = pos.relative(dir);
+                        if (!mc.level.hasChunkAt(n)) continue;
+
+                        BlockState neighborState = mc.level.getBlockState(n);
+                        boolean solidNoFluid = neighborState.canOcclude() && neighborState.getFluidState().isEmpty();
+                        if (solidNoFluid) {
+                            closedSides++;
+                            if (methodB && mc.level.getBrightness(LightLayer.BLOCK, n) > 0) {
+                                neighborHasLight = true;
+                            }
                         }
                     }
 
-                    if (closed) buds.add(pos.immutable());
+                    boolean passesA = methodA && closedSides >= required;
+                    boolean passesB = methodB && neighborHasLight;
+
+                    if (passesA || passesB) buds.add(pos.immutable());
                 }
             }
         }
