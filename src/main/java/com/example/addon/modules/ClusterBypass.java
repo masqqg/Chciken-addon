@@ -64,6 +64,17 @@ public class ClusterBypass extends Module {
             "light gradient from a hidden source, instead of one stray lit block).")
         .defaultValue(true).build());
 
+    private final Setting<Boolean> requireStone = sgGeneral.add(new BoolSetting.Builder()
+        .name("require-stone").description("Only count a light-5 position if the block itself is " +
+            "plain STONE. Filters out false positives on mixed cave terrain (dirt, sand, gravel, tuff...).")
+        .defaultValue(true).build());
+
+    private final Setting<Boolean> requireMossNearby = sgGeneral.add(new BoolSetting.Builder()
+        .name("require-moss-nearby").description("Only count a position if a moss block is one of " +
+            "its 6 neighbors. Filters out surface/forest canopy false positives, but also means a " +
+            "real geode with no nearby lush cave/moss won't be found - turn off if that happens.")
+        .defaultValue(true).build());
+
     private final Setting<Integer> minY = sgGeneral.add(new IntSetting.Builder()
         .name("min-y").description("Lowest Y to scan.")
         .defaultValue(-64).range(-64, 320).sliderRange(-64, 128).build());
@@ -263,16 +274,23 @@ public class ClusterBypass extends Module {
                     if (light != 1 && light != 2 && light != 4 && light != 5) continue;
 
                     BlockState self = mc.level.getBlockState(pos);
-                    if (!self.canOcclude() || !self.getFluidState().isEmpty()) continue;
+                    if (requireStone.get()) {
+                        if (!self.is(Blocks.STONE)) continue; // only plain stone, filters mixed cave terrain
+                    } else if (!self.canOcclude() || !self.getFluidState().isEmpty()) {
+                        continue;
+                    }
 
                     int closedSides = 0;
                     boolean neighborHasLight = false;
+                    boolean mossNearby = false;
 
                     for (Direction dir : Direction.values()) {
                         BlockPos n = pos.relative(dir);
                         if (!mc.level.hasChunkAt(n)) continue;
 
                         BlockState neighborState = mc.level.getBlockState(n);
+                        if (neighborState.is(Blocks.MOSS_BLOCK)) mossNearby = true;
+
                         boolean solidNoFluid = neighborState.canOcclude() && neighborState.getFluidState().isEmpty();
                         if (solidNoFluid) {
                             closedSides++;
@@ -281,6 +299,8 @@ public class ClusterBypass extends Module {
                             }
                         }
                     }
+
+                    if (requireMossNearby.get() && !mossNearby) continue;
 
                     boolean passesA = methodA && closedSides >= required;
                     boolean passesB = methodB && neighborHasLight;
