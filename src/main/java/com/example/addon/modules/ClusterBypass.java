@@ -10,6 +10,7 @@ import meteordevelopment.meteorclient.settings.IntSetting;
 import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.core.BlockPos;
@@ -37,6 +38,41 @@ import java.util.function.Predicate;
 public class ClusterBypass extends Module {
     private static final Predicate<BlockState> BUDDING = st -> st.is(Blocks.BUDDING_AMETHYST);
     private static final int MIN_OPEN_SIDES = 2;
+
+    /**
+     * 16x16 amethyst cluster pixel art. One character = one block of the chunk floor
+     * (column = +X / east, row = +Z / south). '.' is transparent, 'A'..'G' index
+     * SPRITE_PALETTE.
+     */
+    private static final int[] SPRITE_PALETTE = {
+        0x7658B0, 0xCC9AF1, 0x8B68CC, 0x60449B, 0xFEC9E5, 0xAF88F2, 0xFEFDD1
+    };
+    private static final String[] SPRITE = {
+        "................",
+        ".......B........",
+        "......BEF.......",
+        ".....BBECB......",
+        "....BBBECCB.....",
+        "....BEGGFCB.....",
+        "....AFFBACA.....",
+        "....ACFBACD.....",
+        "EEB..ACBAAD..BEE",
+        "BEEB.AAFAAD.BEEB",
+        "BCGBBDACFA.BBGCB",
+        "BCCEADAAFDCCBCCB",
+        ".BCABADACDABACB.",
+        "..BAAAADCDCAAC..",
+        "...CADADBCDAC...",
+        "...ADDDCBDDDA..."
+    };
+    private static final Color[] SPRITE_COLORS = new Color[SPRITE_PALETTE.length];
+
+    static {
+        for (int i = 0; i < SPRITE_PALETTE.length; i++) {
+            int p = SPRITE_PALETTE[i];
+            SPRITE_COLORS[i] = new Color((p >> 16) & 0xFF, (p >> 8) & 0xFF, p & 0xFF, 255);
+        }
+    }
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgRender = settings.createGroup("Render");
@@ -72,6 +108,11 @@ public class ClusterBypass extends Module {
     private final Setting<Integer> markerY = sgRender.add(new IntSetting.Builder()
         .name("marker-y").description("Y level of the chunk marker.")
         .defaultValue(64).range(-64, 320).sliderRange(-64, 128).build());
+
+    private final Setting<Boolean> spriteMarker = sgRender.add(new BoolSetting.Builder()
+        .name("sprite-marker").description("Draw the amethyst cluster pixel art on the chunk floor " +
+            "(one block per pixel) instead of the flat purple slab.")
+        .defaultValue(true).build());
 
     private final Setting<SettingColor> sideColor = sgRender.add(new ColorSetting.Builder()
         .name("side-color").description("Marker fill color.")
@@ -339,7 +380,29 @@ public class ClusterBypass extends Module {
                 cx * 16.0, y, cz * 16.0,
                 cx * 16.0 + 16.0, y + 0.5, cz * 16.0 + 16.0
             );
-            event.renderer.box(marker, sideColor.get(), lineColor.get(), ShapeMode.Both, 0);
+            if (spriteMarker.get()) {
+                // keep the chunk border visible, then fill it with the pixel art
+                event.renderer.box(marker, sideColor.get(), lineColor.get(), ShapeMode.Lines, 0);
+                renderSprite(event, cx, cz, y);
+            } else {
+                event.renderer.box(marker, sideColor.get(), lineColor.get(), ShapeMode.Both, 0);
+            }
+        }
+    }
+
+    /** Draws the pixel art as 16x16 colored 1x0.5x1 boxes covering the chunk floor. */
+    private void renderSprite(Render3DEvent event, int cx, int cz, double y) {
+        for (int row = 0; row < SPRITE.length; row++) {
+            String line = SPRITE[row];
+            for (int col = 0; col < line.length(); col++) {
+                char ch = line.charAt(col);
+                if (ch == '.') continue;
+
+                Color c = SPRITE_COLORS[ch - 'A'];
+                double x = cx * 16.0 + col;
+                double z = cz * 16.0 + row;
+                event.renderer.box(new AABB(x, y, z, x + 1.0, y + 0.5, z + 1.0), c, c, ShapeMode.Sides, 0);
+            }
         }
     }
 }
