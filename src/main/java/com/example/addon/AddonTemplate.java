@@ -10,6 +10,7 @@ import com.example.addon.modules.MobActivityFinder;
 import com.example.addon.modules.PlayerBypassV2;
 import com.example.addon.modules.SpawnerFlag;
 import com.example.addon.modules.SusChunkFinder;
+import com.example.addon.modules.SusChunkFinderV2;
 
 import com.mojang.logging.LogUtils;
 import meteordevelopment.meteorclient.addons.GithubRepo;
@@ -39,6 +40,7 @@ public class AddonTemplate extends MeteorAddon {
         Modules.get().add(new PlayerBypassV2());
         Modules.get().add(new SpawnerFlag());
         Modules.get().add(new SusChunkFinder());
+        Modules.get().add(new SusChunkFinderV2());
 
         // Commands
         Commands.add(new CommandExample());
