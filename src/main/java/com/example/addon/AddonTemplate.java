@@ -3,6 +3,7 @@ package com.example.addon;
 
 import com.example.addon.commands.CommandExample;
 import com.example.addon.hud.HudExample;
+import com.example.addon.modules.BaseFinder;
 import com.example.addon.modules.ChickenStorageESP;
 import com.example.addon.modules.ClusterBypass;
 import com.example.addon.modules.ClearRender;
@@ -33,6 +34,7 @@ public class AddonTemplate extends MeteorAddon {
         LOG.info("Initializing Chicken Addon");
 
         // Modules
+        Modules.get().add(new BaseFinder());
         Modules.get().add(new ChickenStorageESP());
         Modules.get().add(new ClusterBypass());
         Modules.get().add(new ClearRender());
