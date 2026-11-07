@@ -30,6 +30,7 @@ import net.minecraft.network.protocol.game.ClientboundBlockUpdatePacket;
 import net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket;
 import net.minecraft.network.protocol.game.ClientboundLevelEventPacket;
 import net.minecraft.network.protocol.game.ClientboundLevelParticlesPacket;
+import net.minecraft.network.protocol.game.ClientboundOpenScreenPacket;
 import net.minecraft.network.protocol.game.ClientboundSectionBlocksUpdatePacket;
 import net.minecraft.network.protocol.game.ClientboundSoundPacket;
 import net.minecraft.resources.Identifier;
@@ -49,6 +50,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
 
 /**
@@ -68,6 +70,7 @@ import net.minecraft.world.phys.Vec3;
  *   9) entity-storage        : chest/hopper minecart, chest boat, sandikli esek/katir/llama
  *  10) item-drops            : yere dusen sandik/barrel/shulker item'i (kirilan container izi)
  *  11) mining-suspects       : birinin kirdigi bloklar (crack paketi) - isaret olarak
+ *  12) container-open        : actigin container'i hatirlar
  *
  * Hepsi bellege yazilir, oyun kapaninca kaybolur. Diske kayit yok.
  */
@@ -191,6 +194,12 @@ public class ChickenStorageESP extends Module {
         .defaultValue(false)
         .build());
 
+    private final Setting<Boolean> containerOpen = sgChannels.add(new BoolSetting.Builder()
+        .name("container-open")
+        .description("When you open a container, remember the block you clicked. Learns your own bases without any block entity packet.")
+        .defaultValue(true)
+        .build());
+
     private final Setting<Boolean> showHidden = sgChannels.add(new BoolSetting.Builder()
         .name("show-hidden")
         .description("Draw containers that the server replaced with another block.")
@@ -294,6 +303,12 @@ public class ChickenStorageESP extends Module {
         .defaultValue(false)
         .build());
 
+    private final Setting<Boolean> debugChannels = sgDebug.add(new BoolSetting.Builder()
+        .name("debug-channels")
+        .description("Print how many hits every detection channel has so far, every 5 seconds. Shows which channel your server leaves open.")
+        .defaultValue(false)
+        .build());
+
     private final Map<Long, List<Entry>> cache = new HashMap<>();
 
     /** chunk key -> packed block pos -> grup. Sadece bu oturum icin. */
@@ -305,11 +320,14 @@ public class ChickenStorageESP extends Module {
     private final ConcurrentLinkedQueue<long[]> incoming = new ConcurrentLinkedQueue<>();
     private final ConcurrentLinkedQueue<Long> suspectQueue = new ConcurrentLinkedQueue<>();
     private final ConcurrentLinkedQueue<String> logQueue = new ConcurrentLinkedQueue<>();
+    private final ConcurrentLinkedQueue<String> hits = new ConcurrentLinkedQueue<>();
+    private final Map<String, Integer> hitTotals = new HashMap<>();
     private final Set<Long> announcedHidden = new HashSet<>();
     private final Set<String> seenPacketTypes = new HashSet<>();
     private final List<int[]> queue = new ArrayList<>();
 
     private int cursor;
+    private int hitTick;
     private int sinceSweep = Integer.MAX_VALUE / 2;
     private int memoryCount;
     private boolean capWarned;
@@ -405,6 +423,8 @@ public class ChickenStorageESP extends Module {
         incoming.clear();
         suspectQueue.clear();
         queue.clear();
+        hits.clear();
+        hitTotals.clear();
         announcedHidden.clear();
         seenPacketTypes.clear();
         cursor = 0;
@@ -447,7 +467,10 @@ public class ChickenStorageESP extends Module {
             try {
                 p.getChunkData().getBlockEntitiesTagsConsumer(cx, cz).accept((pos, type, tag) -> {
                     int g = group(type);
-                    if (g >= 0) remember(pos, g);
+                    if (g >= 0) {
+                        hit("packet-be");
+                        remember(pos, g);
+                    }
                 });
             } catch (Exception ignored) {
                 // bilinmeyen block entity tipi: o chunk'i atla
@@ -459,7 +482,10 @@ public class ChickenStorageESP extends Module {
         if (event.packet instanceof ClientboundBlockUpdatePacket p) {
             if (!packetMemory.get()) return;
             int g = group(p.getBlockState());
-            if (g >= 0) remember(p.getPos(), g);
+            if (g >= 0) {
+                hit("block-update");
+                remember(p.getPos(), g);
+            }
             return;
         }
 
@@ -468,7 +494,10 @@ public class ChickenStorageESP extends Module {
             if (!packetMemory.get()) return;
             p.runUpdates((pos, state) -> {
                 int g = group(state);
-                if (g >= 0) remember(pos, g);
+                if (g >= 0) {
+                    hit("multi-block");
+                    remember(pos, g);
+                }
             });
             return;
         }
@@ -477,7 +506,10 @@ public class ChickenStorageESP extends Module {
         if (event.packet instanceof ClientboundBlockEntityDataPacket p) {
             if (!packetMemory.get()) return;
             int g = group(p.getType());
-            if (g >= 0) remember(p.getPos(), g);
+            if (g >= 0) {
+                hit("be-packet");
+                remember(p.getPos(), g);
+            }
             return;
         }
 
@@ -485,7 +517,10 @@ public class ChickenStorageESP extends Module {
         if (event.packet instanceof ClientboundBlockEventPacket p) {
             if (!blockEvents.get()) return;
             int g = group(p.getBlock().defaultBlockState());
-            if (g >= 0) remember(p.getPos(), g);
+            if (g >= 0) {
+                hit("block-event");
+                remember(p.getPos(), g);
+            }
             return;
         }
 
@@ -493,7 +528,10 @@ public class ChickenStorageESP extends Module {
         if (event.packet instanceof ClientboundLevelEventPacket p) {
             if (!levelEvents.get() || p.getType() != 2001) return;
             int g = group(Block.stateById(p.getData()));
-            if (g >= 0) remember(p.getPos(), g);
+            if (g >= 0) {
+                hit("block-break");
+                remember(p.getPos(), g);
+            }
             return;
         }
 
@@ -501,7 +539,10 @@ public class ChickenStorageESP extends Module {
         if (event.packet instanceof ClientboundSoundPacket p) {
             if (!sounds.get()) return;
             int g = groupBySound(p.getSound().value().location());
-            if (g >= 0) remember(BlockPos.containing(p.getX(), p.getY(), p.getZ()), g);
+            if (g >= 0) {
+                hit("sound");
+                remember(BlockPos.containing(p.getX(), p.getY(), p.getZ()), g);
+            }
             return;
         }
 
@@ -510,15 +551,38 @@ public class ChickenStorageESP extends Module {
             if (!particles.get()) return;
             if (!(p.getParticle() instanceof BlockParticleOption opt)) return;
             int g = group(opt.getState());
-            if (g >= 0) remember(BlockPos.containing(p.getX(), p.getY(), p.getZ()), g);
+            if (g >= 0) {
+                hit("particle");
+                remember(BlockPos.containing(p.getX(), p.getY(), p.getZ()), g);
+            }
+            return;
+        }
+
+        // ---- container ekrani acildi: tiklanan blogu ogren ----
+        if (event.packet instanceof ClientboundOpenScreenPacket p) {
+            if (!containerOpen.get() || mc.hitResult == null) return;
+            if (!(mc.hitResult instanceof BlockHitResult hit)) return;
+
+            int g = group(mc.level.getBlockState(hit.getBlockPos()));
+            if (g >= 0) {
+                hit("open-screen");
+                remember(hit.getBlockPos(), g);
+            }
             return;
         }
 
         // ---- kirilan blok (crack) ----
         if (event.packet instanceof ClientboundBlockDestructionPacket p) {
             if (!miningSuspects.get()) return;
-            if (p.getProgress() == 0) suspectQueue.add(p.getPos().asLong());
+            if (p.getProgress() == 0) {
+                hit("mining");
+                suspectQueue.add(p.getPos().asLong());
+            }
         }
+    }
+
+    private void hit(String channel) {
+        hits.add(channel);
     }
 
     /** Ag is parcacigindan cagrilir: sadece kuyruga at. */
@@ -574,6 +638,12 @@ public class ChickenStorageESP extends Module {
         }
 
         while (!logQueue.isEmpty()) info("packet: %s", logQueue.poll());
+
+        while (!hits.isEmpty()) hitTotals.merge(hits.poll(), 1, Integer::sum);
+
+        if (debugChannels.get() && ++hitTick % 100 == 0) {
+            info("channels: %s", hitTotals.isEmpty() ? "no hits yet" : hitTotals.toString());
+        }
 
         drainIncoming();
         scanEntityStorage();
@@ -658,6 +728,7 @@ public class ChickenStorageESP extends Module {
 
             if (g < 0) continue;
 
+            hit(e instanceof ItemEntity ? "item-drop" : "entity");
             entityBoxes.add(new EntityBox(e.getBoundingBox(), g));
         }
     }
@@ -691,6 +762,8 @@ public class ChickenStorageESP extends Module {
 
                 int g = group(e.getValue().getType());
                 if (g < 0) continue;
+
+                hit("be-map");
 
                 BlockState state = chunk.getBlockState(pos);
                 boolean hidden = group(state) < 0;
@@ -736,6 +809,7 @@ public class ChickenStorageESP extends Module {
                             if (seen.contains(pk)) continue;
 
                             seen.add(pk);
+                            hit("states");
                             out.add(new Entry(pos, g, false));
                         }
                     }
@@ -755,6 +829,7 @@ public class ChickenStorageESP extends Module {
                 if (pos.getY() < lo || pos.getY() > hi) continue;
 
                 seen.add(pk);
+                hit("memory");
                 out.add(new Entry(pos, e.getValue(), false));
             }
         }
