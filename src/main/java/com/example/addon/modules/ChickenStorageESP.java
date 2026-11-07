@@ -1,11 +1,6 @@
 package com.example.addon.modules;
 
 import com.example.addon.AddonTemplate;
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -13,7 +8,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
-import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
@@ -28,10 +22,18 @@ import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.particles.BlockParticleOption;
 import net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket;
+import net.minecraft.network.protocol.game.ClientboundBlockEventPacket;
 import net.minecraft.network.protocol.game.ClientboundBlockUpdatePacket;
+import net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket;
+import net.minecraft.network.protocol.game.ClientboundLevelEventPacket;
+import net.minecraft.network.protocol.game.ClientboundLevelParticlesPacket;
 import net.minecraft.network.protocol.game.ClientboundSectionBlocksUpdatePacket;
+import net.minecraft.network.protocol.game.ClientboundSoundPacket;
+import net.minecraft.resources.Identifier;
 import net.minecraft.tags.BlockTags;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.BlockEntityType;
@@ -39,23 +41,23 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
 
 /**
- * Storage ESP Bypass - uc kanalli tespit, kalici hafiza ve tracer.
+ * Storage ESP Bypass - anti-xray / anti-ESP sunuculara karsi cok kanalli tespit.
  *
- * Sandic (chest) chunk paketinde iki yerde gelir:
- *   1) blok olarak (section paletinde)
- *   2) ayri bir "block entity" listesinde, koordinatiyla birlikte
- * Sunucudaki anti-xray / anti-ESP eklentileri blogu deepslate/stone ile degistirir,
- * bir kismi block entity listesini de keser. Bu modul uc kanali birlikte kullanir:
+ * Sunucu blok verisini degistirdiginde (deepslate/stone) ve block entity listesini
+ * kestiginde bile geriye kalan izler:
  *
- *   KANAL 1 (block entities): LevelChunk#getBlockEntities()
- *   KANAL 2 (block states): section blok state taramasi
- *   KANAL 3 (paket hafizasi): blok guncellemelerinde gorulen konumlar
+ *   1) chunk paketindeki block entity listesi (istemci onu islemeden once okunur)
+ *   2) chunk section blok state'leri
+ *   3) blok guncelleme / block entity data paketleri
+ *   4) sandik kapagi blok olayi (ClientboundBlockEventPacket)
+ *   5) blok kirilma seviye olayi (2001) - gercek blok id'si tasinir
+ *   6) sandik/barrel/shulker ses paketleri
+ *   7) blok parcaciklari
  *
- * KANAL 3 kalicidir: bulunan chest'ler dimension;x;y;z;grup formatinda diske yazilir,
- * oyun kapanip acildiginda geri yuklenir. Sunucu chest'i sadece yaklasinca acan
- * eklentiler kullaniyorsa bile bir kez gordugun her sey haritada kalir.
+ * Hepsi bellege yazilir, oyun kapaninca kaybolur (diske kayit yok).
  */
 public class ChickenStorageESP extends Module {
     private static final int G_CHEST = 0;
@@ -64,9 +66,7 @@ public class ChickenStorageESP extends Module {
 
     private static final String[] GROUP_NAMES = {"chest", "hopper", "other"};
 
-    private static final String FILE_NAME = "chicken-storage-esp.txt";
-    private static final int MAX_SAVED = 60_000;
-    private static final long SAVE_INTERVAL_MS = 15_000L;
+    private static final int MAX_MEMORY = 150_000;
 
     private record Entry(BlockPos pos, int group, boolean hidden) {
     }
@@ -75,6 +75,7 @@ public class ChickenStorageESP extends Module {
     private final SettingGroup sgChannels = settings.createGroup("Channels");
     private final SettingGroup sgColors = settings.createGroup("Colors");
     private final SettingGroup sgTracers = settings.createGroup("Tracers");
+    private final SettingGroup sgDebug = settings.createGroup("Debug");
 
     // ---- General ----
     private final Setting<Integer> chunkRange = sgGeneral.add(new IntSetting.Builder()
@@ -118,27 +119,51 @@ public class ChickenStorageESP extends Module {
         .build());
 
     // ---- Channels ----
+    private final Setting<Boolean> packetEntities = sgChannels.add(new BoolSetting.Builder()
+        .name("packet-block-entities")
+        .description("Read the block entity list straight out of the chunk packet, before the client drops entries whose block looks like stone.")
+        .defaultValue(true)
+        .build());
+
     private final Setting<Boolean> scanEntities = sgChannels.add(new BoolSetting.Builder()
         .name("scan-block-entities")
-        .description("Read the block entity list. Catches containers whose block was replaced by stone/deepslate but whose entry leaked.")
+        .description("Read the block entity list the client actually kept.")
         .defaultValue(true)
         .build());
 
     private final Setting<Boolean> scanStates = sgChannels.add(new BoolSetting.Builder()
         .name("scan-block-states")
-        .description("Read section block states. Catches containers whose block entity entry was stripped instead.")
+        .description("Read section block states.")
         .defaultValue(true)
         .build());
 
     private final Setting<Boolean> packetMemory = sgChannels.add(new BoolSetting.Builder()
         .name("packet-memory")
-        .description("Remember containers seen in block updates / block entity packets.")
+        .description("Remember containers seen in block updates and block entity data packets.")
         .defaultValue(true)
         .build());
 
-    private final Setting<Boolean> saveToDisk = sgChannels.add(new BoolSetting.Builder()
-        .name("save-to-disk")
-        .description("Write remembered containers to disk so they survive a restart.")
+    private final Setting<Boolean> blockEvents = sgChannels.add(new BoolSetting.Builder()
+        .name("block-events")
+        .description("Chest lid animation packets. Fires when anyone opens a nearby container.")
+        .defaultValue(true)
+        .build());
+
+    private final Setting<Boolean> levelEvents = sgChannels.add(new BoolSetting.Builder()
+        .name("block-breaks")
+        .description("Block break particle events carry the real block id. Catches containers being broken.")
+        .defaultValue(true)
+        .build());
+
+    private final Setting<Boolean> sounds = sgChannels.add(new BoolSetting.Builder()
+        .name("sounds")
+        .description("Container open/close sounds carry the block position.")
+        .defaultValue(true)
+        .build());
+
+    private final Setting<Boolean> particles = sgChannels.add(new BoolSetting.Builder()
+        .name("block-particles")
+        .description("Block particles carry the block state that produced them.")
         .defaultValue(true)
         .build());
 
@@ -157,23 +182,23 @@ public class ChickenStorageESP extends Module {
     // ---- Colors ----
     private final Setting<SettingColor> chestColor = sgColors.add(new ColorSetting.Builder()
         .name("chest-color")
-        .defaultValue(new SettingColor(255, 160, 40, 255))
+        .defaultValue(new SettingColor(255, 170, 60, 255))
         .build());
 
     private final Setting<SettingColor> hopperColor = sgColors.add(new ColorSetting.Builder()
         .name("hopper-color")
-        .defaultValue(new SettingColor(120, 200, 255, 255))
+        .defaultValue(new SettingColor(205, 205, 215, 255))
         .build());
 
     private final Setting<SettingColor> otherColor = sgColors.add(new ColorSetting.Builder()
         .name("other-color")
-        .defaultValue(new SettingColor(255, 90, 220, 255))
+        .defaultValue(new SettingColor(150, 205, 255, 255))
         .build());
 
     private final Setting<SettingColor> hiddenColor = sgColors.add(new ColorSetting.Builder()
         .name("hidden-color")
         .description("Containers the server tried to hide.")
-        .defaultValue(new SettingColor(255, 40, 60, 255))
+        .defaultValue(new SettingColor(255, 60, 60, 255))
         .build());
 
     private final Setting<Integer> fillOpacity = sgColors.add(new IntSetting.Builder()
@@ -186,7 +211,7 @@ public class ChickenStorageESP extends Module {
     // ---- Tracers ----
     private final Setting<Boolean> tracers = sgTracers.add(new BoolSetting.Builder()
         .name("tracers")
-        .description("Draw a line from your eyes to every container in range.")
+        .description("Draw a line from the camera to every container in range.")
         .defaultValue(true)
         .build());
 
@@ -206,7 +231,7 @@ public class ChickenStorageESP extends Module {
         .sliderRange(8, 256)
         .build());
 
-    private final Setting<Integer> tracerAlpha = sgTracers.add(new IntSetting.Builder()
+    private final Setting<Integer> tracerFade = sgTracers.add(new IntSetting.Builder()
         .name("tracer-fade")
         .description("How strongly far tracers fade out. 0 = solid lines.")
         .defaultValue(70)
@@ -214,32 +239,40 @@ public class ChickenStorageESP extends Module {
         .sliderRange(0, 95)
         .build());
 
-    private final Setting<Boolean> tracerStart = sgTracers.add(new BoolSetting.Builder()
+    private final Setting<Boolean> tracerFromFeet = sgTracers.add(new BoolSetting.Builder()
         .name("tracer-from-feet")
-        .description("Start tracers at your feet instead of your eyes.")
+        .description("Start tracers at your feet instead of the camera.")
+        .defaultValue(false)
+        .build());
+
+    // ---- Debug ----
+    private final Setting<Boolean> debugPackets = sgDebug.add(new BoolSetting.Builder()
+        .name("debug-packets")
+        .description("Print the name of every packet type the server sends, once each. Turn on for a minute near a chest and read chat.")
         .defaultValue(false)
         .build());
 
     private final Map<Long, List<Entry>> cache = new HashMap<>();
 
-    /** dimension -> chunk key -> packed block pos -> grup. Kalici hafiza. */
-    private final Map<String, Map<Long, Map<Long, Integer>>> found = new HashMap<>();
+    /** chunk key -> packed block pos -> grup. Sadece bu oturum icin. */
+    private final Map<Long, Map<Long, Integer>> memory = new HashMap<>();
 
     private final ConcurrentLinkedQueue<long[]> incoming = new ConcurrentLinkedQueue<>();
+    private final ConcurrentLinkedQueue<String> logQueue = new ConcurrentLinkedQueue<>();
     private final Set<Long> announcedHidden = new HashSet<>();
+    private final Set<String> seenPacketTypes = new HashSet<>();
     private final List<int[]> queue = new ArrayList<>();
 
     private int cursor;
     private int sinceSweep = Integer.MAX_VALUE / 2;
-
-    private boolean dirty;
-    private int savedCount;
+    private int memoryCount;
     private boolean capWarned;
-    private long lastSave = System.currentTimeMillis();
+
+    private Object lastLevel;
 
     public ChickenStorageESP() {
         super(AddonTemplate.CATEGORY, "storage-esp-bypass",
-            "Storage ESP with leak detection, persistent packet memory and clean tracers.");
+            "Storage ESP with packet level leak detection and clean tracers.");
     }
 
     // --------------------------------------------------------------- helpers
@@ -269,7 +302,7 @@ public class ChickenStorageESP extends Module {
         return -1;
     }
 
-    /** Block entity tipinden grup. Sunucu blogu degistirdiginde tek bilgi kaynagi. */
+    /** Block entity tipinden grup. */
     private static int group(BlockEntityType<?> type) {
         if (type == BlockEntityType.CHEST || type == BlockEntityType.TRAPPED_CHEST) return G_CHEST;
         if (type == BlockEntityType.HOPPER) return G_HOPPER;
@@ -283,158 +316,149 @@ public class ChickenStorageESP extends Module {
         return -1;
     }
 
-    private String dimension() {
-        return mc.level == null ? "unknown" : mc.level.dimension().identifier().toString();
-    }
+    /** Ses adindan grup. */
+    private static int groupBySound(Identifier id) {
+        String path = id.getPath();
 
-    private Path storageFile() {
-        return MeteorClient.FOLDER.toPath().resolve(FILE_NAME);
+        if (path.equals("block.chest.open") || path.equals("block.chest.close")
+            || path.equals("block.chest.locked")) {
+            return G_CHEST;
+        }
+
+        if (path.equals("block.ender_chest.open") || path.equals("block.ender_chest.close")
+            || path.equals("block.barrel.open") || path.equals("block.barrel.close")
+            || path.equals("block.shulker_box.open") || path.equals("block.shulker_box.close")) {
+            return G_OTHER;
+        }
+
+        return -1;
     }
 
     @Override
     public void onActivate() {
         reset();
-        if (saveToDisk.get()) loadSaved();
     }
 
     @Override
     public void onDeactivate() {
-        saveSaved(true);
         reset();
     }
 
     private void reset() {
         cache.clear();
+        memory.clear();
         incoming.clear();
-        announcedHidden.clear();
         queue.clear();
+        announcedHidden.clear();
+        seenPacketTypes.clear();
         cursor = 0;
         sinceSweep = Integer.MAX_VALUE / 2;
+        memoryCount = 0;
+        capWarned = false;
+        lastLevel = null;
     }
 
-    // ------------------------------------------------------------ persistence
+    // ---------------------------------------------------------------- memory
 
-    private void loadSaved() {
-        Path path = storageFile();
-        if (!Files.isRegularFile(path)) return;
-
-        int count = 0;
-
-        try {
-            for (String line : Files.readAllLines(path, StandardCharsets.UTF_8)) {
-                if (line.isEmpty() || line.charAt(0) == '#') continue;
-
-                String[] parts = line.split(";");
-                if (parts.length != 5) continue;
-
-                try {
-                    int x = Integer.parseInt(parts[1]);
-                    int y = Integer.parseInt(parts[2]);
-                    int z = Integer.parseInt(parts[3]);
-                    int g = Integer.parseInt(parts[4]);
-                    if (g < 0 || g > G_OTHER) continue;
-
-                    store(parts[0], BlockPos.asLong(x, y, z), g);
-                    count++;
-                } catch (NumberFormatException ignored) {
-                }
-            }
-        } catch (IOException e) {
-            info("Could not read %s: %s", FILE_NAME, e.getMessage());
-            return;
-        }
-
-        savedCount = count;
-        if (count > 0) info("Loaded %d saved containers.", count);
-    }
-
-    /** Kalici haritaya yazar. Yeni kayit eklendiyse true doner. */
-    private boolean store(String dim, long packedPos, int group) {
-        Map<Long, Map<Long, Integer>> dimMap = found.computeIfAbsent(dim, k -> new HashMap<>());
-
-        long ck = key(BlockPos.getX(packedPos) >> 4, BlockPos.getZ(packedPos) >> 4);
-        Map<Long, Integer> chunkMap = dimMap.computeIfAbsent(ck, k -> new HashMap<>());
-
+    /** Bellekte bir konum tutar. Yeni kayit eklendiyse true doner. */
+    private boolean store(long chunkKey, long packedPos, int group) {
+        Map<Long, Integer> chunkMap = memory.computeIfAbsent(chunkKey, k -> new HashMap<>());
         Integer old = chunkMap.put(packedPos, group);
+
         if (old == null) {
-            savedCount++;
-            dirty = true;
+            memoryCount++;
             return true;
         }
-        if (old != group) dirty = true;
-        return false;
+        return old != group;
     }
 
-    private void saveSaved(boolean sync) {
-        if (!saveToDisk.get() || !dirty) return;
-        dirty = false;
-
-        // Tick thread'inde sadece kopya al, dosya isini ayri thread'de yap.
-        Map<String, Map<Long, Map<Long, Integer>>> snapshot = new HashMap<>();
-        for (Map.Entry<String, Map<Long, Map<Long, Integer>>> e : found.entrySet()) {
-            Map<Long, Map<Long, Integer>> inner = new HashMap<>();
-            for (Map.Entry<Long, Map<Long, Integer>> c : e.getValue().entrySet()) {
-                inner.put(c.getKey(), new HashMap<>(c.getValue()));
-            }
-            snapshot.put(e.getKey(), inner);
-        }
-
-        Runnable task = () -> {
-            try {
-                Path dir = MeteorClient.FOLDER.toPath();
-                Files.createDirectories(dir);
-
-                Path target = dir.resolve(FILE_NAME);
-                Path tmp = dir.resolve(FILE_NAME + ".tmp");
-
-                List<String> lines = new ArrayList<>();
-                lines.add("# chicken-storage-esp: dimension;x;y;z;group");
-
-                for (Map.Entry<String, Map<Long, Map<Long, Integer>>> e : snapshot.entrySet()) {
-                    for (Map<Long, Integer> chunkMap : e.getValue().values()) {
-                        for (Map.Entry<Long, Integer> entry : chunkMap.entrySet()) {
-                            BlockPos pos = BlockPos.of(entry.getKey());
-                            lines.add(e.getKey() + ";" + pos.getX() + ";" + pos.getY() + ";" + pos.getZ()
-                                + ";" + entry.getValue());
-                        }
-                    }
-                }
-
-                Files.write(tmp, lines, StandardCharsets.UTF_8);
-                Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING);
-            } catch (IOException ignored) {
-                // dosya yazilamadi: oyunu kilitlememek icin sessiz gec
-            }
-        };
-
-        if (sync) {
-            task.run();
-        } else {
-            new Thread(task, "chicken-storage-esp-save").start();
-        }
-    }
-
-    // ------------------------------------------------------------- packet memory
+    // --------------------------------------------------------------- packets
 
     @EventHandler
     private void onPacket(PacketEvent.Receive event) {
-        if (!packetMemory.get()) return;
+        if (debugPackets.get()) {
+            String name = event.packet.getClass().getSimpleName();
+            if (seenPacketTypes.add(name)) logQueue.add(name);
+        }
 
+        // ---- chunk paketindeki ham block entity listesi ----
+        if (event.packet instanceof ClientboundLevelChunkWithLightPacket p) {
+            if (!packetEntities.get()) return;
+
+            int cx = p.getX();
+            int cz = p.getZ();
+
+            try {
+                p.getChunkData().getBlockEntitiesTagsConsumer(cx, cz).accept((pos, type, tag) -> {
+                    int g = group(type);
+                    if (g >= 0) remember(pos, g);
+                });
+            } catch (Exception ignored) {
+                // bilinmeyen block entity tipi: o chunk'i atla
+            }
+            return;
+        }
+
+        // ---- blok guncellemesi ----
         if (event.packet instanceof ClientboundBlockUpdatePacket p) {
+            if (!packetMemory.get()) return;
             int g = group(p.getBlockState());
             if (g >= 0) remember(p.getPos(), g);
-        } else if (event.packet instanceof ClientboundSectionBlocksUpdatePacket p) {
+            return;
+        }
+
+        // ---- section blok guncellemeleri ----
+        if (event.packet instanceof ClientboundSectionBlocksUpdatePacket p) {
+            if (!packetMemory.get()) return;
             p.runUpdates((pos, state) -> {
                 int g = group(state);
                 if (g >= 0) remember(pos, g);
             });
-        } else if (event.packet instanceof ClientboundBlockEntityDataPacket p) {
+            return;
+        }
+
+        // ---- block entity data paketi ----
+        if (event.packet instanceof ClientboundBlockEntityDataPacket p) {
+            if (!packetMemory.get()) return;
             int g = group(p.getType());
             if (g >= 0) remember(p.getPos(), g);
+            return;
+        }
+
+        // ---- sandik kapagi (blok olayi) ----
+        if (event.packet instanceof ClientboundBlockEventPacket p) {
+            if (!blockEvents.get()) return;
+            int g = group(p.getBlock().defaultBlockState());
+            if (g >= 0) remember(p.getPos(), g);
+            return;
+        }
+
+        // ---- blok kirilma parcacik olayi (2001) ----
+        if (event.packet instanceof ClientboundLevelEventPacket p) {
+            if (!levelEvents.get() || p.getType() != 2001) return;
+            int g = group(Block.stateById(p.getData()));
+            if (g >= 0) remember(p.getPos(), g);
+            return;
+        }
+
+        // ---- ses ----
+        if (event.packet instanceof ClientboundSoundPacket p) {
+            if (!sounds.get()) return;
+            int g = groupBySound(p.getSound().value().location());
+            if (g >= 0) remember(BlockPos.containing(p.getX(), p.getY(), p.getZ()), g);
+            return;
+        }
+
+        // ---- blok parcaciklari ----
+        if (event.packet instanceof ClientboundLevelParticlesPacket p) {
+            if (!particles.get()) return;
+            if (!(p.getParticle() instanceof BlockParticleOption opt)) return;
+            int g = group(opt.getState());
+            if (g >= 0) remember(BlockPos.containing(p.getX(), p.getY(), p.getZ()), g);
         }
     }
 
-    /** Ag is parcacigindan cagrilir: sadece kuyruga at, haritaya dokunma. */
+    /** Ag is parcacigindan cagrilir: sadece kuyruga at. */
     private void remember(BlockPos pos, int group) {
         if (pos.getY() < minY.get() || pos.getY() > maxY.get()) return;
         incoming.add(new long[]{pos.getX(), pos.getY(), pos.getZ(), group});
@@ -443,26 +467,25 @@ public class ChickenStorageESP extends Module {
     private void drainIncoming() {
         if (incoming.isEmpty()) return;
 
-        Set<Long> dirtyChunks = new HashSet<>();
-        String dim = dimension();
+        Set<Long> touched = new HashSet<>();
         long[] a;
 
         while ((a = incoming.poll()) != null) {
-            if (savedCount >= MAX_SAVED) {
+            if (memoryCount >= MAX_MEMORY) {
                 if (!capWarned) {
                     capWarned = true;
-                    info("Storage memory is full (%d entries), new containers are not saved.", MAX_SAVED);
+                    info("Storage memory is full (%d entries), new containers are ignored.", MAX_MEMORY);
                 }
                 continue;
             }
 
-            long pk = BlockPos.asLong((int) a[0], (int) a[1], (int) a[2]);
-            store(dim, pk, (int) a[3]);
-            dirtyChunks.add(key((int) (a[0] >> 4), (int) (a[2] >> 4)));
+            long ck = key((int) (a[0] >> 4), (int) (a[2] >> 4));
+            if (store(ck, BlockPos.asLong((int) a[0], (int) a[1], (int) a[2]), (int) a[3])) {
+                touched.add(ck);
+            }
         }
 
-        // Sadece etkilenen chunk'lari yeniden tara (tick thread'inde).
-        for (long ck : dirtyChunks) rescan(keyX(ck), keyZ(ck));
+        for (long ck : touched) rescan(keyX(ck), keyZ(ck));
     }
 
     // ------------------------------------------------------------------- tick
@@ -471,12 +494,17 @@ public class ChickenStorageESP extends Module {
     private void onTick(TickEvent.Post event) {
         if (mc.level == null || mc.player == null) return;
 
-        drainIncoming();
-
-        if (System.currentTimeMillis() - lastSave > SAVE_INTERVAL_MS) {
-            lastSave = System.currentTimeMillis();
-            saveSaved(false);
+        if (lastLevel != mc.level) {
+            lastLevel = mc.level;
+            memory.clear();
+            cache.clear();
+            memoryCount = 0;
+            capWarned = false;
         }
+
+        while (!logQueue.isEmpty()) info("packet: %s", logQueue.poll());
+
+        drainIncoming();
 
         sinceSweep++;
 
@@ -501,7 +529,6 @@ public class ChickenStorageESP extends Module {
             }
             queue.sort((a, b) -> Integer.compare(a[2], b[2]));
 
-            // Menzil disina cikan cache kayitlarini at (kalici hafiza etkilenmez).
             cache.keySet().removeIf(k -> {
                 int cx = keyX(k);
                 int cz = keyZ(k);
@@ -520,10 +547,8 @@ public class ChickenStorageESP extends Module {
         }
     }
 
-    /** Bir chunk'i yeniden tarar ve cache'e yazar. */
     private void rescan(int cx, int cz) {
-        if (mc.level == null) return;
-        if (!mc.level.hasChunk(cx, cz)) return;
+        if (mc.level == null || !mc.level.hasChunk(cx, cz)) return;
 
         LevelChunk chunk = mc.level.getChunk(cx, cz);
         List<Entry> entries = scanChunk(chunk, cx, cz);
@@ -543,7 +568,7 @@ public class ChickenStorageESP extends Module {
         int lo = Math.max(minY.get(), mc.level.getMinY());
         int hi = Math.min(maxY.get(), mc.level.getMaxY() - 1);
 
-        // ---- KANAL 1: block entity listesi ----
+        // ---- istemcinin tuttugu block entity'ler ----
         if (scanEntities.get()) {
             for (Map.Entry<BlockPos, BlockEntity> e : chunk.getBlockEntities().entrySet()) {
                 BlockPos pos = e.getKey();
@@ -567,7 +592,7 @@ public class ChickenStorageESP extends Module {
             }
         }
 
-        // ---- KANAL 2: blok state'leri ----
+        // ---- blok state taramasi ----
         if (scanStates.get()) {
             int byteX = cx << 4;
             int byteZ = cz << 4;
@@ -603,9 +628,8 @@ public class ChickenStorageESP extends Module {
             }
         }
 
-        // ---- KANAL 3: kalici hafiza ----
-        Map<Long, Map<Long, Integer>> dimMap = found.get(dimension());
-        Map<Long, Integer> remembered = dimMap == null ? null : dimMap.get(key(cx, cz));
+        // ---- paket hafizasi ----
+        Map<Long, Integer> remembered = memory.get(key(cx, cz));
 
         if (remembered != null && !remembered.isEmpty()) {
             for (Map.Entry<Long, Integer> e : remembered.entrySet()) {
@@ -654,12 +678,13 @@ public class ChickenStorageESP extends Module {
 
         int range = tracerRange.get();
         int limit = tracerLimit.get();
-        double fadeFactor = tracerAlpha.get() / 100.0;
-        boolean feet = tracerStart.get();
+        double fadeFactor = tracerFade.get() / 100.0;
 
-        double ox = mc.player.getX();
-        double oy = feet ? mc.player.getY() : mc.player.getEyeY();
-        double oz = mc.player.getZ();
+        // Kamera pozisyonu zaten interpolasyonlu: yururken cizgi kaymaz.
+        Vec3 cam = mc.gameRenderer.getMainCamera().position();
+        double ox = cam.x;
+        double oy = tracerFromFeet.get() ? cam.y - 1.62 : cam.y;
+        double oz = cam.z;
 
         int drawn = 0;
 
