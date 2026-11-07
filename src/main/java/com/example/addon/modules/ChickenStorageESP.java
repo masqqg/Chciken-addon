@@ -15,12 +15,9 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
-import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
-import meteordevelopment.meteorclient.renderer.Renderer2D;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
-import meteordevelopment.meteorclient.renderer.text.TextRenderer;
 import meteordevelopment.meteorclient.settings.BoolSetting;
 import meteordevelopment.meteorclient.settings.ColorSetting;
 import meteordevelopment.meteorclient.settings.IntSetting;
@@ -44,7 +41,7 @@ import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.phys.AABB;
 
 /**
- * Storage ESP v2 - uc kanalli tespit + kalici hafiza.
+ * Storage ESP Bypass - uc kanalli tespit, kalici hafiza ve tracer.
  *
  * Sandic (chest) chunk paketinde iki yerde gelir:
  *   1) blok olarak (section paletinde)
@@ -77,7 +74,7 @@ public class ChickenStorageESP extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgChannels = settings.createGroup("Channels");
     private final SettingGroup sgColors = settings.createGroup("Colors");
-    private final SettingGroup sgHud = settings.createGroup("HUD");
+    private final SettingGroup sgTracers = settings.createGroup("Tracers");
 
     // ---- General ----
     private final Setting<Integer> chunkRange = sgGeneral.add(new IntSetting.Builder()
@@ -118,20 +115,6 @@ public class ChickenStorageESP extends Module {
         .defaultValue(8)
         .range(1, 40)
         .sliderRange(1, 40)
-        .build());
-
-    private final Setting<Boolean> tracers = sgGeneral.add(new BoolSetting.Builder()
-        .name("tracers")
-        .description("Draw a line to the nearest container.")
-        .defaultValue(false)
-        .build());
-
-    private final Setting<Integer> tracerRange = sgGeneral.add(new IntSetting.Builder()
-        .name("tracer-range")
-        .description("Only draw tracers for containers within this many blocks.")
-        .defaultValue(64)
-        .range(8, 256)
-        .sliderRange(8, 128)
         .build());
 
     // ---- Channels ----
@@ -200,30 +183,41 @@ public class ChickenStorageESP extends Module {
         .sliderRange(0, 255)
         .build());
 
-    // ---- HUD ----
-    private final Setting<Boolean> hud = sgHud.add(new BoolSetting.Builder()
-        .name("hud")
+    // ---- Tracers ----
+    private final Setting<Boolean> tracers = sgTracers.add(new BoolSetting.Builder()
+        .name("tracers")
+        .description("Draw a line from your eyes to every container in range.")
         .defaultValue(true)
         .build());
 
-    private final Setting<Integer> hudX = sgHud.add(new IntSetting.Builder()
-        .name("hud-x")
-        .defaultValue(10)
-        .range(0, 3000)
-        .sliderRange(0, 800)
+    private final Setting<Integer> tracerRange = sgTracers.add(new IntSetting.Builder()
+        .name("tracer-range")
+        .description("Only draw tracers for containers within this many blocks.")
+        .defaultValue(96)
+        .range(8, 512)
+        .sliderRange(8, 256)
         .build());
 
-    private final Setting<Integer> hudY = sgHud.add(new IntSetting.Builder()
-        .name("hud-y")
-        .defaultValue(10)
-        .range(0, 2000)
-        .sliderRange(0, 800)
+    private final Setting<Integer> tracerLimit = sgTracers.add(new IntSetting.Builder()
+        .name("tracer-limit")
+        .description("Maximum number of tracer lines drawn at once.")
+        .defaultValue(96)
+        .range(4, 512)
+        .sliderRange(8, 256)
         .build());
 
-    private final Setting<Boolean> hudAnimation = sgHud.add(new BoolSetting.Builder()
-        .name("hud-animation")
-        .description("Smooth numbers, fade-in and a pulsing accent bar.")
-        .defaultValue(true)
+    private final Setting<Integer> tracerAlpha = sgTracers.add(new IntSetting.Builder()
+        .name("tracer-fade")
+        .description("How strongly far tracers fade out. 0 = solid lines.")
+        .defaultValue(70)
+        .range(0, 95)
+        .sliderRange(0, 95)
+        .build());
+
+    private final Setting<Boolean> tracerStart = sgTracers.add(new BoolSetting.Builder()
+        .name("tracer-from-feet")
+        .description("Start tracers at your feet instead of your eyes.")
+        .defaultValue(false)
         .build());
 
     private final Map<Long, List<Entry>> cache = new HashMap<>();
@@ -243,17 +237,9 @@ public class ChickenStorageESP extends Module {
     private boolean capWarned;
     private long lastSave = System.currentTimeMillis();
 
-    private double shownTotal;
-    private double shownHidden;
-    private double fade;
-    private long lastHudFrame = System.currentTimeMillis();
-    private long lastNearestRefresh;
-    private Entry nearest;
-    private double nearestDist = Double.MAX_VALUE;
-
     public ChickenStorageESP() {
-        super(AddonTemplate.CATEGORY, "chicken-storage-esp",
-            "Storage ESP with block entity leak detection, persistent packet memory and a modern HUD.");
+        super(AddonTemplate.CATEGORY, "storage-esp-bypass",
+            "Storage ESP with leak detection, persistent packet memory and clean tracers.");
     }
 
     // --------------------------------------------------------------- helpers
@@ -324,11 +310,6 @@ public class ChickenStorageESP extends Module {
         queue.clear();
         cursor = 0;
         sinceSweep = Integer.MAX_VALUE / 2;
-        nearest = null;
-        nearestDist = Double.MAX_VALUE;
-        shownTotal = 0;
-        shownHidden = 0;
-        fade = 0;
     }
 
     // ------------------------------------------------------------ persistence
@@ -656,6 +637,7 @@ public class ChickenStorageESP extends Module {
         Color[] line = {chestColor.get(), hopperColor.get(), otherColor.get(), hiddenColor.get()};
         Color hidden = line[3];
 
+        // --- kutular ---
         for (Map.Entry<Long, List<Entry>> e : cache.entrySet()) {
             if (Math.abs(keyX(e.getKey()) - pcx) > r || Math.abs(keyZ(e.getKey()) - pcz) > r) continue;
 
@@ -667,146 +649,45 @@ public class ChickenStorageESP extends Module {
             }
         }
 
-        if (tracers.get()) {
-            updateNearest();
+        // --- tracer'lar ---
+        if (!tracers.get()) return;
 
-            if (nearest != null && nearestDist <= tracerRange.get()) {
-                event.renderer.line(
-                    mc.player.getX(), mc.player.getEyeY(), mc.player.getZ(),
-                    nearest.pos().getX() + 0.5, nearest.pos().getY() + 0.5, nearest.pos().getZ() + 0.5,
-                    nearest.hidden() ? hiddenColor.get() : line[nearest.group()]);
+        int range = tracerRange.get();
+        int limit = tracerLimit.get();
+        double fadeFactor = tracerAlpha.get() / 100.0;
+        boolean feet = tracerStart.get();
+
+        double ox = mc.player.getX();
+        double oy = feet ? mc.player.getY() : mc.player.getEyeY();
+        double oz = mc.player.getZ();
+
+        int drawn = 0;
+
+        for (Map.Entry<Long, List<Entry>> e : cache.entrySet()) {
+            if (drawn >= limit) break;
+            if (Math.abs(keyX(e.getKey()) - pcx) > r || Math.abs(keyZ(e.getKey()) - pcz) > r) continue;
+
+            for (Entry entry : e.getValue()) {
+                if (drawn >= limit) break;
+
+                double tx = entry.pos().getX() + 0.5;
+                double ty = entry.pos().getY() + 0.5;
+                double tz = entry.pos().getZ() + 0.5;
+
+                double dx = tx - ox;
+                double dy = ty - oy;
+                double dz = tz - oz;
+                double dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+                if (dist > range) continue;
+
+                Color base = entry.hidden() ? hidden : line[entry.group()];
+                int alpha = (int) (255 * (1.0 - fadeFactor * (dist / range)));
+                if (alpha < 30) alpha = 30;
+
+                event.renderer.line(ox, oy, oz, tx, ty, tz, new Color(base.r, base.g, base.b, alpha));
+                drawn++;
             }
         }
-    }
-
-    private void updateNearest() {
-        long now = System.currentTimeMillis();
-        if (now - lastNearestRefresh < 250) return;
-        lastNearestRefresh = now;
-
-        if (mc.player == null) return;
-
-        Entry best = null;
-        double bestDist = Double.MAX_VALUE;
-
-        for (List<Entry> list : cache.values()) {
-            for (Entry e : list) {
-                double dx = e.pos().getX() + 0.5 - mc.player.getX();
-                double dy = e.pos().getY() + 0.5 - mc.player.getY();
-                double dz = e.pos().getZ() + 0.5 - mc.player.getZ();
-                double d = Math.sqrt(dx * dx + dy * dy + dz * dz);
-                if (d < bestDist) {
-                    bestDist = d;
-                    best = e;
-                }
-            }
-        }
-
-        nearest = best;
-        nearestDist = bestDist;
-    }
-
-    @EventHandler
-    private void onRender2D(Render2DEvent event) {
-        if (!hud.get() || mc.level == null || mc.player == null) return;
-
-        long now = System.currentTimeMillis();
-        double dt = Math.min(0.1, (now - lastHudFrame) / 1000.0);
-        lastHudFrame = now;
-
-        int total = 0;
-        int hiddenCount = 0;
-        int[] perGroup = new int[3];
-
-        for (List<Entry> list : cache.values()) {
-            for (Entry e : list) {
-                total++;
-                if (e.hidden()) hiddenCount++;
-                else perGroup[e.group()]++;
-            }
-        }
-
-        if (hudAnimation.get()) {
-            shownTotal += (total - shownTotal) * Math.min(1.0, dt * 12.0);
-            shownHidden += (hiddenCount - shownHidden) * Math.min(1.0, dt * 12.0);
-            fade += (1.0 - fade) * Math.min(1.0, dt * 8.0);
-        } else {
-            shownTotal = total;
-            shownHidden = hiddenCount;
-            fade = 1.0;
-        }
-
-        double x = hudX.get();
-        double y = hudY.get();
-        double w = 176;
-        double h = 62;
-        double accent = 3;
-
-        Color bg = new Color(12, 12, 16, (int) (200 * fade));
-        Color bg2 = new Color(20, 18, 28, (int) (170 * fade));
-        Color white = new Color(255, 255, 255, (int) (255 * fade));
-        Color dim = new Color(170, 170, 185, (int) (230 * fade));
-
-        double pulse = 0.55 + 0.45 * Math.sin(now / 320.0);
-        Color accentColor = new Color(hiddenCount > 0 ? 255 : 170, hiddenCount > 0 ? 70 : 60,
-            hiddenCount > 0 ? 90 : 255, (int) ((140 + 100 * pulse) * fade));
-
-        Renderer2D.COLOR.begin();
-        Renderer2D.COLOR.quad(x, y, x + w, y + h, bg);
-        Renderer2D.COLOR.quad(x, y, x + w, y + 15, bg2);
-        Renderer2D.COLOR.quad(x, y, x + accent, y + h, accentColor);
-
-        int pct = queue.isEmpty() ? 100 : Math.min(100, cursor * 100 / queue.size());
-        double barW = (w - accent - 10) * (pct / 100.0);
-        Renderer2D.COLOR.quad(x + accent + 4, y + h - 5, x + accent + 4 + barW, y + h - 3,
-            new Color(120, 200, 255, (int) (200 * fade)));
-        Renderer2D.COLOR.end();
-
-        TextRenderer tr = TextRenderer.get();
-        tr.begin(1.0);
-
-        double tx = x + accent + 6;
-        double ty = y + 4;
-
-        tr.render("STORAGE ESP", tx, ty, white);
-        String right = String.format("%d", Math.round(shownTotal));
-        tr.render(right, x + w - 8 - tr.getWidth(right), ty, white);
-
-        ty += 15;
-        tr.render(String.format("%d chest  %d hopper  %d other", perGroup[0], perGroup[1], perGroup[2]),
-            tx, ty, dim);
-
-        ty += 11;
-        if (hiddenCount > 0) {
-            tr.render(String.format("hidden: %d  (server replaced block)", Math.round(shownHidden)),
-                tx, ty, new Color(255, 80, 100, (int) (255 * fade)));
-        } else {
-            tr.render("hidden: 0", tx, ty, dim);
-        }
-
-        ty += 11;
-        if (nearest != null) {
-            double dx = nearest.pos().getX() + 0.5 - mc.player.getX();
-            double dz = nearest.pos().getZ() + 0.5 - mc.player.getZ();
-            String line = String.format("nearest %dm %s  %s", Math.round(nearestDist), compass(dx, dz),
-                nearest.hidden() ? "hidden" : GROUP_NAMES[nearest.group()]);
-            tr.render(line, tx, ty, nearest.hidden() ? new Color(255, 120, 140, (int) (255 * fade)) : dim);
-        } else {
-            tr.render("nearest: -", tx, ty, dim);
-        }
-
-        ty += 11;
-        tr.render(String.format("sweep %d%%   %d chunks   %d saved", pct, cache.size(), savedCount), tx, ty, dim);
-
-        tr.end();
-    }
-
-    private static final String[] COMPASS = {"S", "SW", "W", "NW", "N", "NE", "E", "SE"};
-
-    private static String compass(double dx, double dz) {
-        double yaw = -Math.toDegrees(Math.atan2(dx, dz));
-        yaw = (yaw % 360.0 + 360.0) % 360.0;
-        int i = (int) Math.round(yaw / 45.0) % 8;
-        return COMPASS[i];
     }
 }
