@@ -2,6 +2,7 @@ package com.example.addon.modules;
 
 import com.example.addon.AddonTemplate;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -44,6 +45,8 @@ import net.minecraft.world.phys.AABB;
  *  - Ziyaret edilen geodeları gizleme
  *  - Overworld filtresi ve ayar değişince kuyruğu otomatik yenileme
  *  - Sprite artık blok blok değil, birleştirilmiş dikdörtgenlerle çizilir (daha az draw call)
+ *  - Bud sayımı: ışık seviyesinden cluster/large/medium/small ayrımı çıkarılır ve
+ *    HUD ile sohbet bildiriminde gösterilir
  */
 public class ClusterBypass extends Module {
     private static final int BUD_LIGHT_MASK = (1 << 1) | (1 << 2) | (1 << 4) | (1 << 5);
@@ -134,7 +137,7 @@ public class ClusterBypass extends Module {
     private final Setting<Integer> minY = sgGeneral.add(new IntSetting.Builder()
         .name("min-y")
         .description("Lowest Y to scan.")
-        .defaultValue(-64)
+        .defaultValue(4)
         .range(-64, 320)
         .sliderRange(-64, 128)
         .build());
@@ -268,6 +271,20 @@ public class ClusterBypass extends Module {
         .defaultValue(new SettingColor(255, 255, 255, 255))
         .build());
 
+    private final Setting<Integer> hudGeodeList = sgRender.add(new IntSetting.Builder()
+        .name("hud-geode-list")
+        .description("How many found geodes to list with their bud counts.")
+        .defaultValue(2)
+        .range(0, 5)
+        .sliderRange(0, 5)
+        .build());
+
+    private final Setting<Boolean> hudDetails = sgRender.add(new BoolSetting.Builder()
+        .name("hud-bud-details")
+        .description("Also show the bud type breakdown (cluster/large/medium/small).")
+        .defaultValue(true)
+        .build());
+
     private final Setting<SettingColor> sideColor = sgRender.add(new ColorSetting.Builder()
         .name("side-color")
         .description("Marker fill color.")
@@ -336,9 +353,15 @@ public class ClusterBypass extends Module {
         int ySum;
         int emitters;
         boolean visited;
+        /** Işık seviyesine göre bud sayısı: 5 = cluster, 4 = large, 2 = medium, 1 = small. */
+        final int[] tiers = new int[6];
 
         int avgYOr(int fallback) {
             return emitters > 0 ? ySum / emitters : fallback;
+        }
+
+        void copyTiers(int[] src) {
+            System.arraycopy(src, 0, tiers, 0, tiers.length);
         }
     }
 
@@ -362,6 +385,7 @@ public class ClusterBypass extends Module {
 
     private int scanSumY;
     private int scanEmitters;
+    private final int[] scanTiers = new int[6];
     private double emaScanMs;
 
     private final List<int[]> markerCache = new ArrayList<>();
@@ -413,6 +437,7 @@ public class ClusterBypass extends Module {
         visitedTimer = 0;
         scanSumY = 0;
         scanEmitters = 0;
+        Arrays.fill(scanTiers, 0);
         emaScanMs = 0.0;
         sinceSweep = Integer.MAX_VALUE / 2;
         dataVersion++;
@@ -480,6 +505,7 @@ public class ClusterBypass extends Module {
 
             scanSumY = 0;
             scanEmitters = 0;
+            Arrays.fill(scanTiers, 0);
             int found = scanChunk(level, c[0], c[1], bottom, top);
 
             if (found > limit) {
@@ -511,16 +537,19 @@ public class ClusterBypass extends Module {
             if (state.confirms < 100) state.confirms++;
             state.ySum = scanSumY;
             state.emitters = scanEmitters;
+            state.copyTiers(scanTiers);
 
             if (found != oldCount || state.confirms == confirm) dataVersion++;
 
             if (debug.get() && found != oldCount) {
-                info("chunk %d,%d: buds=%d (y~%d)", c[0], c[1], found, state.avgYOr(fallbackY));
+                info("chunk %d,%d: buds=%d [C%d L%d M%d S%d] (y~%d)", c[0], c[1], found,
+                    state.tiers[5], state.tiers[4], state.tiers[2], state.tiers[1], state.avgYOr(fallbackY));
             }
 
             // Yeni onaylanan geode -> tek seferlik bildirim.
             if (chatNotify.get() && found >= needed && state.confirms >= confirm && announced.add(k)) {
-                notifyFound(c[0], c[1], state.avgYOr(fallbackY));
+                notifyFound(c[0], c[1], state.avgYOr(fallbackY), state.count,
+                    state.tiers[5], state.tiers[4], state.tiers[2], state.tiers[1]);
             }
         }
 
@@ -532,7 +561,7 @@ public class ClusterBypass extends Module {
         return ((chunkRange.get() * 31 + minY.get()) * 31 + maxY.get()) * 31 + sweepTicks.get();
     }
 
-    private void notifyFound(int cx, int cz, int y) {
+    private void notifyFound(int cx, int cz, int y, int buds, int clusters, int large, int medium, int small) {
         int centerX = (cx << 4) + 8;
         int centerZ = (cz << 4) + 8;
 
@@ -541,7 +570,8 @@ public class ClusterBypass extends Module {
         double dz = centerZ + 0.5 - mc.player.getZ();
         int dist = (int) Math.round(Math.sqrt(dx * dx + dy * dy + dz * dz));
 
-        info("Geode: %d, %d, %d (%dm %s)", centerX, y, centerZ, dist, compass(dx, dz));
+        info("Geode: %d, %d, %d (%dm %s) | %d buds [C%d L%d M%d S%d]",
+            centerX, y, centerZ, dist, compass(dx, dz), buds, clusters, large, medium, small);
     }
 
     private static String compass(double dx, double dz) {
@@ -663,6 +693,7 @@ public class ClusterBypass extends Module {
                         count++;
                         scanSumY += y;
                         scanEmitters++;
+                        scanTiers[light]++;
                     }
                 }
             }
@@ -745,7 +776,10 @@ public class ClusterBypass extends Module {
 
             int cx = keyX(e.getKey());
             int cz = keyZ(e.getKey());
-            markerCache.add(new int[]{cx, cz, s.avgYOr(fallbackY)});
+            markerCache.add(new int[]{
+                cx, cz, s.avgYOr(fallbackY), s.count,
+                s.tiers[5], s.tiers[4], s.tiers[2], s.tiers[1]
+            });
 
             if (growth) {
                 for (int dx = -gr; dx <= gr; dx++) {
@@ -757,6 +791,24 @@ public class ClusterBypass extends Module {
         growthCache = new long[area.size()];
         int i = 0;
         for (long k : area) growthCache[i++] = k;
+    }
+
+    private List<int[]> nearestMarkers(int n) {
+        List<int[]> list = new ArrayList<>(markerCache);
+        list.sort(Comparator.comparingDouble(this::distSqToPlayer));
+        return list.size() > n ? list.subList(0, n) : list;
+    }
+
+    private double distSqToPlayer(int[] m) {
+        double dx = m[0] * 16.0 + 8.0 - mc.player.getX();
+        double dz = m[1] * 16.0 + 8.0 - mc.player.getZ();
+        return dx * dx + dz * dz;
+    }
+
+    /** Bud sayısını (istenirse tür dağılımıyla) metne çevirir. */
+    private static String budsText(int[] m, boolean details) {
+        if (!details) return String.format("%d buds", m[3]);
+        return String.format("%d buds [C%d L%d M%d S%d]", m[3], m[4], m[5], m[6], m[7]);
     }
 
     private int[] nearestMarker() {
@@ -859,24 +911,50 @@ public class ClusterBypass extends Module {
         double x = hudX.get();
         double y = hudY.get();
         Color color = hudColor.get();
+        double lineHeight = 10.0;
 
-        int[] nearest = nearestMarker();
-        String near = "nearest: -";
-
-        if (nearest != null) {
-            double dx = nearest[0] * 16.0 + 8.0 - mc.player.getX();
-            double dz = nearest[1] * 16.0 + 8.0 - mc.player.getZ();
-            near = String.format("nearest: %dm %s", (int) Math.round(Math.sqrt(dx * dx + dz * dz)), compass(dx, dz));
-        }
+        int totalBuds = 0;
+        for (int[] m : markerCache) totalBuds += m[3];
 
         int pct = queue.isEmpty() ? 100 : cursor * 100 / queue.size();
+        int listSize = Math.min(hudGeodeList.get(), markerCache.size());
+        boolean details = hudDetails.get();
 
         TextRenderer renderer = TextRenderer.get();
         renderer.begin(1.0);
-        renderer.render(String.format("ClusterBypass v6 | Geodes: %d", markerCache.size()), x, y, color);
-        renderer.render(
-            String.format("sweep %d%% (%d/%d) | %s | %.1fms", pct, cursor, queue.size(), near, emaScanMs),
-            x, y + renderer.getHeight(), color);
+
+        renderer.render(String.format("ClusterBypass v6 | Geodes: %d | Buds: %d | sweep %d%% | %.1fms",
+            markerCache.size(), totalBuds, pct, emaScanMs), x, y, color);
+
+        double cy = y + lineHeight;
+
+        if (listSize > 0) {
+            List<int[]> near = nearestMarkers(listSize);
+
+            for (int i = 0; i < near.size(); i++) {
+                int[] m = near.get(i);
+                double dx = m[0] * 16.0 + 8.0 - mc.player.getX();
+                double dz = m[1] * 16.0 + 8.0 - mc.player.getZ();
+                int dist = (int) Math.round(Math.sqrt(dx * dx + dz * dz));
+
+                renderer.render(String.format("#%d %dm %s | %s", i + 1, dist, compass(dx, dz), budsText(m, details)),
+                    x, cy, color);
+                cy += lineHeight;
+            }
+        } else {
+            int[] nearest = nearestMarker();
+            String near = "nearest: -";
+
+            if (nearest != null) {
+                double dx = nearest[0] * 16.0 + 8.0 - mc.player.getX();
+                double dz = nearest[1] * 16.0 + 8.0 - mc.player.getZ();
+                near = String.format("nearest: %dm %s | %s",
+                    (int) Math.round(Math.sqrt(dx * dx + dz * dz)), compass(dx, dz), budsText(nearest, details));
+            }
+
+            renderer.render(near, x, cy, color);
+        }
+
         renderer.end();
     }
 }
