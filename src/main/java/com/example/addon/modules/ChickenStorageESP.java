@@ -23,6 +23,7 @@ import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.particles.BlockParticleOption;
+import net.minecraft.network.protocol.game.ClientboundBlockDestructionPacket;
 import net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket;
 import net.minecraft.network.protocol.game.ClientboundBlockEventPacket;
 import net.minecraft.network.protocol.game.ClientboundBlockUpdatePacket;
@@ -33,6 +34,13 @@ import net.minecraft.network.protocol.game.ClientboundSectionBlocksUpdatePacket;
 import net.minecraft.network.protocol.game.ClientboundSoundPacket;
 import net.minecraft.resources.Identifier;
 import net.minecraft.tags.BlockTags;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.animal.equine.AbstractChestedHorse;
+import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.entity.vehicle.boat.AbstractChestBoat;
+import net.minecraft.world.item.BlockItem;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.entity.BlockEntity;
@@ -46,33 +54,43 @@ import net.minecraft.world.phys.Vec3;
 /**
  * Storage ESP Bypass - anti-xray / anti-ESP sunuculara karsi cok kanalli tespit.
  *
- * Sunucu blok verisini degistirdiginde (deepslate/stone) ve block entity listesini
- * kestiginde bile geriye kalan izler:
+ * Her kanal ayri ayri acilip kapanabilir. Amac: sunucu bir kanali kestiginde
+ * digerlerinden hala iz yakalayabilmek.
  *
- *   1) chunk paketindeki block entity listesi (istemci onu islemeden once okunur)
- *   2) chunk section blok state'leri
- *   3) blok guncelleme / block entity data paketleri
- *   4) sandik kapagi blok olayi (ClientboundBlockEventPacket)
- *   5) blok kirilma seviye olayi (2001) - gercek blok id'si tasinir
- *   6) sandik/barrel/shulker ses paketleri
- *   7) blok parcaciklari
+ *   1) packet-block-entities : chunk paketindeki block entity listesi (istemci islemeden once)
+ *   2) scan-block-entities   : istemcinin kabul ettigi block entity listesi
+ *   3) scan-block-states     : chunk section blok state'leri
+ *   4) packet-memory         : blok guncelleme / block entity data paketleri
+ *   5) block-events          : sandik kapagi animasyonu
+ *   6) block-breaks          : blok kirilma efekti (2001) - gercek blok id'si
+ *   7) sounds                : sandik/barrel/shulker ses paketleri
+ *   8) block-particles       : blok parcaciklari
+ *   9) entity-storage        : chest/hopper minecart, chest boat, sandikli esek/katir/llama
+ *  10) item-drops            : yere dusen sandik/barrel/shulker item'i (kirilan container izi)
+ *  11) mining-suspects       : birinin kirdigi bloklar (crack paketi) - isaret olarak
  *
- * Hepsi bellege yazilir, oyun kapaninca kaybolur (diske kayit yok).
+ * Hepsi bellege yazilir, oyun kapaninca kaybolur. Diske kayit yok.
  */
 public class ChickenStorageESP extends Module {
     private static final int G_CHEST = 0;
     private static final int G_HOPPER = 1;
     private static final int G_OTHER = 2;
+    private static final int G_SUSPECT = 3;
 
-    private static final String[] GROUP_NAMES = {"chest", "hopper", "other"};
+    private static final String[] GROUP_NAMES = {"chest", "hopper", "other", "suspect"};
 
     private static final int MAX_MEMORY = 150_000;
+    private static final int MAX_SUSPECTS = 2_000;
 
     private record Entry(BlockPos pos, int group, boolean hidden) {
     }
 
+    private record EntityBox(AABB box, int group) {
+    }
+
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgChannels = settings.createGroup("Channels");
+    private final SettingGroup sgEntities = settings.createGroup("Entities");
     private final SettingGroup sgColors = settings.createGroup("Colors");
     private final SettingGroup sgTracers = settings.createGroup("Tracers");
     private final SettingGroup sgDebug = settings.createGroup("Debug");
@@ -151,7 +169,7 @@ public class ChickenStorageESP extends Module {
 
     private final Setting<Boolean> levelEvents = sgChannels.add(new BoolSetting.Builder()
         .name("block-breaks")
-        .description("Block break particle events carry the real block id. Catches containers being broken.")
+        .description("Block break particle events carry the real block id.")
         .defaultValue(true)
         .build());
 
@@ -167,6 +185,12 @@ public class ChickenStorageESP extends Module {
         .defaultValue(true)
         .build());
 
+    private final Setting<Boolean> miningSuspects = sgChannels.add(new BoolSetting.Builder()
+        .name("mining-suspects")
+        .description("Mark blocks somebody is breaking. A hidden container being mined shows up here.")
+        .defaultValue(false)
+        .build());
+
     private final Setting<Boolean> showHidden = sgChannels.add(new BoolSetting.Builder()
         .name("show-hidden")
         .description("Draw containers that the server replaced with another block.")
@@ -177,6 +201,19 @@ public class ChickenStorageESP extends Module {
         .name("notify-hidden")
         .description("Print a chat message the first time a hidden container is found.")
         .defaultValue(false)
+        .build());
+
+    // ---- Entities ----
+    private final Setting<Boolean> entityStorage = sgEntities.add(new BoolSetting.Builder()
+        .name("entity-storage")
+        .description("Chest / hopper minecarts, chest boats and chested donkeys, mules and llamas.")
+        .defaultValue(true)
+        .build());
+
+    private final Setting<Boolean> itemDrops = sgEntities.add(new BoolSetting.Builder()
+        .name("item-drops")
+        .description("Dropped container items. Reveals containers that were just broken.")
+        .defaultValue(true)
         .build());
 
     // ---- Colors ----
@@ -199,6 +236,11 @@ public class ChickenStorageESP extends Module {
         .name("hidden-color")
         .description("Containers the server tried to hide.")
         .defaultValue(new SettingColor(255, 60, 60, 255))
+        .build());
+
+    private final Setting<SettingColor> suspectColor = sgColors.add(new ColorSetting.Builder()
+        .name("suspect-color")
+        .defaultValue(new SettingColor(170, 150, 90, 255))
         .build());
 
     private final Setting<Integer> fillOpacity = sgColors.add(new IntSetting.Builder()
@@ -248,7 +290,7 @@ public class ChickenStorageESP extends Module {
     // ---- Debug ----
     private final Setting<Boolean> debugPackets = sgDebug.add(new BoolSetting.Builder()
         .name("debug-packets")
-        .description("Print the name of every packet type the server sends, once each. Turn on for a minute near a chest and read chat.")
+        .description("Print the name of every packet type the server sends, once each.")
         .defaultValue(false)
         .build());
 
@@ -257,7 +299,11 @@ public class ChickenStorageESP extends Module {
     /** chunk key -> packed block pos -> grup. Sadece bu oturum icin. */
     private final Map<Long, Map<Long, Integer>> memory = new HashMap<>();
 
+    private final List<EntityBox> entityBoxes = new ArrayList<>();
+    private final Set<Long> suspects = new HashSet<>();
+
     private final ConcurrentLinkedQueue<long[]> incoming = new ConcurrentLinkedQueue<>();
+    private final ConcurrentLinkedQueue<Long> suspectQueue = new ConcurrentLinkedQueue<>();
     private final ConcurrentLinkedQueue<String> logQueue = new ConcurrentLinkedQueue<>();
     private final Set<Long> announcedHidden = new HashSet<>();
     private final Set<String> seenPacketTypes = new HashSet<>();
@@ -316,6 +362,13 @@ public class ChickenStorageESP extends Module {
         return -1;
     }
 
+    /** Dusen item'in grubu. */
+    private static int group(ItemStack stack) {
+        if (stack.isEmpty()) return -1;
+        if (stack.getItem() instanceof BlockItem block) return group(block.getBlock().defaultBlockState());
+        return -1;
+    }
+
     /** Ses adindan grup. */
     private static int groupBySound(Identifier id) {
         String path = id.getPath();
@@ -347,7 +400,10 @@ public class ChickenStorageESP extends Module {
     private void reset() {
         cache.clear();
         memory.clear();
+        entityBoxes.clear();
+        suspects.clear();
         incoming.clear();
+        suspectQueue.clear();
         queue.clear();
         announcedHidden.clear();
         seenPacketTypes.clear();
@@ -455,6 +511,13 @@ public class ChickenStorageESP extends Module {
             if (!(p.getParticle() instanceof BlockParticleOption opt)) return;
             int g = group(opt.getState());
             if (g >= 0) remember(BlockPos.containing(p.getX(), p.getY(), p.getZ()), g);
+            return;
+        }
+
+        // ---- kirilan blok (crack) ----
+        if (event.packet instanceof ClientboundBlockDestructionPacket p) {
+            if (!miningSuspects.get()) return;
+            if (p.getProgress() == 0) suspectQueue.add(p.getPos().asLong());
         }
     }
 
@@ -465,6 +528,12 @@ public class ChickenStorageESP extends Module {
     }
 
     private void drainIncoming() {
+        Long sp;
+
+        while ((sp = suspectQueue.poll()) != null) {
+            if (suspects.size() < MAX_SUSPECTS) suspects.add(sp);
+        }
+
         if (incoming.isEmpty()) return;
 
         Set<Long> touched = new HashSet<>();
@@ -498,6 +567,8 @@ public class ChickenStorageESP extends Module {
             lastLevel = mc.level;
             memory.clear();
             cache.clear();
+            suspects.clear();
+            entityBoxes.clear();
             memoryCount = 0;
             capWarned = false;
         }
@@ -505,6 +576,7 @@ public class ChickenStorageESP extends Module {
         while (!logQueue.isEmpty()) info("packet: %s", logQueue.poll());
 
         drainIncoming();
+        scanEntityStorage();
 
         sinceSweep++;
 
@@ -544,6 +616,49 @@ public class ChickenStorageESP extends Module {
             int[] c = queue.get(cursor++);
             if (!mc.level.hasChunk(c[0], c[1])) continue;
             rescan(c[0], c[1]);
+        }
+    }
+
+    /** Entity olarak tasinan storage: minecart, chest boat, sandikli at/llama. */
+    private void scanEntityStorage() {
+        entityBoxes.clear();
+
+        if (!entityStorage.get() && !itemDrops.get()) return;
+
+        int range = chunkRange.get() * 16;
+        double px = mc.player.getX();
+        double py = mc.player.getY();
+        double pz = mc.player.getZ();
+        double rangeSq = (double) range * range;
+
+        for (Entity e : mc.level.entitiesForRendering()) {
+            double dx = e.getX() - px;
+            double dy = e.getY() - py;
+            double dz = e.getZ() - pz;
+            if (dx * dx + dy * dy + dz * dz > rangeSq) continue;
+            if (e.getY() < minY.get() || e.getY() > maxY.get()) continue;
+
+            int g = -1;
+
+            if (entityStorage.get()) {
+                if (e.getType() == EntityType.CHEST_MINECART) {
+                    g = G_CHEST;
+                } else if (e.getType() == EntityType.HOPPER_MINECART) {
+                    g = G_HOPPER;
+                } else if (e instanceof AbstractChestBoat) {
+                    g = G_CHEST;
+                } else if (e instanceof AbstractChestedHorse horse && horse.hasChest()) {
+                    g = G_OTHER;
+                }
+            }
+
+            if (g < 0 && itemDrops.get() && e instanceof ItemEntity item) {
+                g = group(item.getItem());
+            }
+
+            if (g < 0) continue;
+
+            entityBoxes.add(new EntityBox(e.getBoundingBox(), g));
         }
     }
 
@@ -651,7 +766,7 @@ public class ChickenStorageESP extends Module {
 
     @EventHandler
     private void onRender3D(Render3DEvent event) {
-        if (mc.level == null || mc.player == null || cache.isEmpty()) return;
+        if (mc.level == null || mc.player == null) return;
 
         int pcx = mc.player.blockPosition().getX() >> 4;
         int pcz = mc.player.blockPosition().getZ() >> 4;
@@ -660,6 +775,7 @@ public class ChickenStorageESP extends Module {
 
         Color[] line = {chestColor.get(), hopperColor.get(), otherColor.get(), hiddenColor.get()};
         Color hidden = line[3];
+        Color suspect = suspectColor.get();
 
         // --- kutular ---
         for (Map.Entry<Long, List<Entry>> e : cache.entrySet()) {
@@ -670,6 +786,26 @@ public class ChickenStorageESP extends Module {
                 Color side = new Color(c.r, c.g, c.b, op);
 
                 event.renderer.box(new AABB(entry.pos()), side, c, ShapeMode.Both, 0);
+            }
+        }
+
+        // --- entity storage ---
+        for (EntityBox box : entityBoxes) {
+            Color c = line[box.group()];
+            Color side = new Color(c.r, c.g, c.b, Math.min(op, 25));
+
+            event.renderer.box(box.box(), side, c, ShapeMode.Both, 0);
+        }
+
+        // --- kirilan blok isaretleri ---
+        if (miningSuspects.get() && !suspects.isEmpty()) {
+            Color side = new Color(suspect.r, suspect.g, suspect.b, 20);
+
+            for (long sp : suspects) {
+                BlockPos pos = BlockPos.of(sp);
+                if (Math.abs((pos.getX() >> 4) - pcx) > r || Math.abs((pos.getZ() >> 4) - pcz) > r) continue;
+
+                event.renderer.box(new AABB(pos), side, suspect, ShapeMode.Lines, 0);
             }
         }
 
@@ -699,20 +835,40 @@ public class ChickenStorageESP extends Module {
                 double ty = entry.pos().getY() + 0.5;
                 double tz = entry.pos().getZ() + 0.5;
 
-                double dx = tx - ox;
-                double dy = ty - oy;
-                double dz = tz - oz;
-                double dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+                if (drawTracer(event, ox, oy, oz, tx, ty, tz, range, fadeFactor,
+                    entry.hidden() ? hidden : line[entry.group()])) {
+                    drawn++;
+                }
+            }
+        }
 
-                if (dist > range) continue;
+        for (EntityBox box : entityBoxes) {
+            if (drawn >= limit) break;
 
-                Color base = entry.hidden() ? hidden : line[entry.group()];
-                int alpha = (int) (255 * (1.0 - fadeFactor * (dist / range)));
-                if (alpha < 30) alpha = 30;
+            AABB b = box.box();
+            double tx = (b.minX + b.maxX) * 0.5;
+            double ty = (b.minY + b.maxY) * 0.5;
+            double tz = (b.minZ + b.maxZ) * 0.5;
 
-                event.renderer.line(ox, oy, oz, tx, ty, tz, new Color(base.r, base.g, base.b, alpha));
+            if (drawTracer(event, ox, oy, oz, tx, ty, tz, range, fadeFactor, line[box.group()])) {
                 drawn++;
             }
         }
+    }
+
+    private boolean drawTracer(Render3DEvent event, double ox, double oy, double oz,
+                               double tx, double ty, double tz, int range, double fadeFactor, Color base) {
+        double dx = tx - ox;
+        double dy = ty - oy;
+        double dz = tz - oz;
+        double dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+        if (dist > range) return false;
+
+        int alpha = (int) (255 * (1.0 - fadeFactor * (dist / range)));
+        if (alpha < 30) alpha = 30;
+
+        event.renderer.line(ox, oy, oz, tx, ty, tz, new Color(base.r, base.g, base.b, alpha));
+        return true;
     }
 }
