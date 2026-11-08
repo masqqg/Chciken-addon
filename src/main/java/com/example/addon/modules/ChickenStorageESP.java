@@ -18,6 +18,7 @@ import meteordevelopment.meteorclient.settings.IntSetting;
 import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.utils.Utils;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
@@ -101,7 +102,7 @@ public class ChickenStorageESP extends Module {
     // ---- General ----
     private final Setting<Integer> chunkRange = sgGeneral.add(new IntSetting.Builder()
         .name("chunk-range")
-        .description("Show storage within this many chunks.")
+        .description("Minimum scan/render range in chunks; the client's render distance is used when it is larger.")
         .defaultValue(16)
         .range(1, 32)
         .sliderRange(1, 32)
@@ -351,6 +352,11 @@ public class ChickenStorageESP extends Module {
 
     private static int keyZ(long k) {
         return (int) k;
+    }
+
+    /** Block ESP gibi: en az chunk-range, en az istemcinin render mesafesi kadar tara ve göster. */
+    private int viewRange() {
+        return Math.max(chunkRange.get(), Utils.getRenderDistance() + 1);
     }
 
     /** Blok state'ten grup. -1 = storage degil. */
@@ -656,7 +662,7 @@ public class ChickenStorageESP extends Module {
 
             int pcx = mc.player.blockPosition().getX() >> 4;
             int pcz = mc.player.blockPosition().getZ() >> 4;
-            int r = chunkRange.get();
+            int r = viewRange();
 
             queue.clear();
             cursor = 0;
@@ -695,7 +701,7 @@ public class ChickenStorageESP extends Module {
 
         if (!entityStorage.get() && !itemDrops.get()) return;
 
-        int range = chunkRange.get() * 16;
+        int range = viewRange() * 16;
         double px = mc.player.getX();
         double py = mc.player.getY();
         double pz = mc.player.getZ();
@@ -845,7 +851,7 @@ public class ChickenStorageESP extends Module {
 
         int pcx = mc.player.blockPosition().getX() >> 4;
         int pcz = mc.player.blockPosition().getZ() >> 4;
-        int r = chunkRange.get();
+        int r = viewRange();
         int op = fillOpacity.get();
 
         Color[] line = {chestColor.get(), hopperColor.get(), otherColor.get(), hiddenColor.get()};

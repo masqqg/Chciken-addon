@@ -28,6 +28,9 @@ import java.util.Set;
  * (deepslate under Y 0). Client side only.
  * Sections without any air are skipped, and a time budget per tick keeps it fast
  * without freezing the game.
+ *
+ * The air pocket the player is standing in is never filled: that pocket is the
+ * tunnel being dug, so filling it would turn freshly broken blocks into stone.
  */
 public class ClearRender extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -141,6 +144,8 @@ public class ClearRender extends Module {
         Set<Long> queued = new HashSet<>();
         List<BlockPos> toFill = new ArrayList<>();
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+        BlockPos playerFeet = mc.player.blockPosition();
+        BlockPos playerHead = playerFeet.above();
 
         for (int i = 0; i < chunk.getSectionsCount(); i++) {
             int secMin = (minSection + i) << 4;
@@ -164,6 +169,10 @@ public class ClearRender extends Module {
 
                         List<BlockPos> pocket = floodFill(pos.immutable(), max, visited);
                         if (pocket == null) continue;
+
+                        // Oyuncunun içinde durduğu cep kendi kazdığımız tüneldir.
+                        // Burayı doldurursak kırdığımız bloklar taş görünür.
+                        if (pocket.contains(playerFeet) || pocket.contains(playerHead)) continue;
 
                         for (BlockPos p : pocket) {
                             if (queued.add(p.asLong())) toFill.add(p);

@@ -39,13 +39,12 @@ import net.minecraft.core.SectionPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.level.chunk.DataLayer;
-import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.lighting.LayerLightEventListener;
 import net.minecraft.world.phys.AABB;
 
 /**
  * Blok ışığı verisinden amethyst geode'larını bulur (blok state'i okumaz).
- * ClusterBypass v8
+ * ClusterBypass v9
  *
  * v6 yenilikleri:
  *  - Işık, section DataLayer'larından okunur (getBrightness yerine) -> belirgin hız artışı
@@ -67,10 +66,15 @@ import net.minecraft.world.phys.AABB;
  * v8 yenilikleri:
  *  - Bulunan geodelar diske kaydedilir (meteor-client/cluster-bypass-geodes.json) ve
  *    modül açılınca geri yüklenir; menzilden çıkınca veya oyun kapanınca kaybolmazlar
+ *
+ * v9 yenilikleri:
+ *  - Chunk işaretleri artık her zaman sabit Y=64'te çizilir
  */
 public class ClusterBypass extends Module {
     /** Büyük amethyst bud ışık seviyesi (küçük=1, orta=2, büyük=4, cluster=5). */
     private static final int LARGE_BUD_LIGHT = 4;
+    /** Chunk işaretleri her zaman bu Y'de çizilir. */
+    private static final int MARKER_Y = 64;
 
     private static final String GEODE_FILE = "cluster-bypass-geodes.json";
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
@@ -248,20 +252,6 @@ public class ClusterBypass extends Module {
         .build());
 
     // ---- Render ----
-    private final Setting<Integer> markerY = sgRender.add(new IntSetting.Builder()
-        .name("marker-y")
-        .description("Y level of the chunk marker when auto-y is off.")
-        .defaultValue(64)
-        .range(-64, 320)
-        .sliderRange(-64, 128)
-        .build());
-
-    private final Setting<Boolean> autoY = sgRender.add(new BoolSetting.Builder()
-        .name("auto-y")
-        .description("Draw the marker at the highest block of that chunk instead of marker-y.")
-        .defaultValue(true)
-        .build());
-
     private final Setting<Boolean> spriteMarker = sgRender.add(new BoolSetting.Builder()
         .name("sprite-marker")
         .description("Draw the amethyst cluster pixel art on the chunk floor.")
@@ -430,8 +420,6 @@ public class ClusterBypass extends Module {
         boolean visited;
         /** Bir kez onaylanan geode menzilden çıkınca silinmez ve diske yazılır. */
         boolean persistent;
-        /** auto-y için önbelleklenmiş işaret Y'si. */
-        int markY = Integer.MIN_VALUE;
         /** Bulunan büyük bud merkezleri (BlockPos.asLong). */
         long[] buds = new long[0];
 
@@ -561,7 +549,7 @@ public class ClusterBypass extends Module {
             SavedGeode g = new SavedGeode();
             g.x = keyX(e.getKey());
             g.z = keyZ(e.getKey());
-            g.y = s.markY != Integer.MIN_VALUE ? s.markY : s.avgYOr(markerY.get());
+            g.y = s.avgYOr(MARKER_Y);
             g.count = s.count;
             g.visited = s.visited;
             g.buds = s.buds;
@@ -609,7 +597,6 @@ public class ClusterBypass extends Module {
                 s.ySum = g.y * s.emitters;
                 s.visited = g.visited;
                 s.persistent = true;
-                s.markY = g.y;
                 s.buds = g.buds != null ? g.buds : new long[0];
 
                 long k = key(g.x, g.z);
@@ -679,7 +666,7 @@ public class ClusterBypass extends Module {
         int limit = maxBuds.get();
         int confirm = confirmSweeps.get();
         int needed = minimum.get();
-        int fallbackY = markerY.get();
+        int fallbackY = MARKER_Y;
 
         blockLayers.clear();
         skyLayers.clear();
@@ -732,7 +719,6 @@ public class ClusterBypass extends Module {
             for (int i = 0; i < budArray.length; i++) budArray[i] = scanBuds.get(i);
             state.buds = budArray;
 
-            if (found != oldCount) state.markY = topYOf(c[0], c[1]);
             if (found != oldCount || state.confirms == confirm) {
                 dataVersion++;
                 saveDirty = true;
@@ -797,7 +783,7 @@ public class ClusterBypass extends Module {
 
         int min = minimum.get();
         int confirm = confirmSweeps.get();
-        int fallbackY = markerY.get();
+        int fallbackY = MARKER_Y;
         boolean changed = false;
 
         for (Map.Entry<Long, ChunkState> e : chunks.entrySet()) {
@@ -1012,37 +998,18 @@ public class ClusterBypass extends Module {
 
     // ------------------------------------------------------------------ cache
 
-    /** Chunk'un en ustundeki blok (yuzey) Y'si. */
-    private int topYOf(int cx, int cz) {
-        if (mc.level == null) return markerY.get();
-
-        int top = mc.level.getMinY();
-
-        for (int x = 0; x < 16; x++) {
-            for (int z = 0; z < 16; z++) {
-                int y = mc.level.getHeight(Heightmap.Types.MOTION_BLOCKING, (cx << 4) + x, (cz << 4) + z);
-                if (y > top) top = y;
-            }
-        }
-
-        return top;
-    }
-
     private void refreshCache() {
         int min = minimum.get();
         int confirm = confirmSweeps.get();
         int gr = growthRadius.get();
         boolean growth = showGrowthArea.get();
         boolean skipVisited = hideVisited.get();
-        int fallbackY = markerY.get();
 
         int signature = min;
         signature = signature * 31 + confirm;
         signature = signature * 31 + gr;
-        signature = signature * 31 + fallbackY;
         signature = signature * 2 + (growth ? 1 : 0);
         signature = signature * 2 + (skipVisited ? 1 : 0);
-        signature = signature * 2 + (autoY.get() ? 1 : 0);
 
         if (cacheVersion == dataVersion && cacheSignature == signature) return;
         cacheVersion = dataVersion;
@@ -1058,16 +1025,8 @@ public class ClusterBypass extends Module {
 
             int cx = keyX(e.getKey());
             int cz = keyZ(e.getKey());
-            int markY;
 
-            if (autoY.get()) {
-                if (s.markY == Integer.MIN_VALUE) s.markY = topYOf(cx, cz);
-                markY = s.markY;
-            } else {
-                markY = s.avgYOr(fallbackY);
-            }
-
-            markerCache.add(new int[]{cx, cz, markY, s.count});
+            markerCache.add(new int[]{cx, cz, MARKER_Y, s.count});
 
             if (growth) {
                 for (int dx = -gr; dx <= gr; dx++) {
@@ -1127,7 +1086,7 @@ public class ClusterBypass extends Module {
         int pcx = mc.player.blockPosition().getX() >> 4;
         int pcz = mc.player.blockPosition().getZ() >> 4;
         int r = chunkRange.get();
-        double baseY = markerY.get();
+        double baseY = MARKER_Y;
 
         int min = minimum.get();
         int confirm = confirmSweeps.get();
@@ -1159,14 +1118,13 @@ public class ClusterBypass extends Module {
         Color side = sideColor.get();
         Color line = lineColor.get();
         boolean sprite = spriteMarker.get();
-        boolean dynamicY = autoY.get();
 
         for (int[] m : markerCache) {
             if (Math.abs(m[0] - pcx) > r || Math.abs(m[1] - pcz) > r) continue;
 
             double x = m[0] * 16.0;
             double z = m[1] * 16.0;
-            double y = dynamicY ? m[2] : baseY;
+            double y = MARKER_Y;
 
             if (sprite) {
                 event.renderer.box(new AABB(x, y, z, x + 16.0, y + 0.5, z + 16.0), side, line, ShapeMode.Lines, 0);
@@ -1254,7 +1212,7 @@ public class ClusterBypass extends Module {
         TextRenderer renderer = TextRenderer.get();
         renderer.begin(1.0);
 
-        renderer.render(String.format("ClusterBypass v8 | Geodes: %d | Large buds: %d | sweep %d%% | %.1fms",
+        renderer.render(String.format("ClusterBypass v9 | Geodes: %d | Large buds: %d | sweep %d%% | %.1fms",
             markerCache.size(), totalBuds, pct, emaScanMs), x, y, color);
 
         double cy = y + lineHeight;
