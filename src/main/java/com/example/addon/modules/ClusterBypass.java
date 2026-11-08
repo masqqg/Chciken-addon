@@ -24,14 +24,15 @@ import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.SectionPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.level.chunk.DataLayer;
+import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.lighting.LayerLightEventListener;
 import net.minecraft.world.phys.AABB;
-import net.minecraft.world.level.levelgen.Heightmap;
 
 /**
  * Blok ışığı verisinden amethyst geode'larını bulur (blok state'i okumaz).
@@ -39,7 +40,7 @@ import net.minecraft.world.level.levelgen.Heightmap;
  *
  * v6 yenilikleri:
  *  - Işık, section DataLayer'larından okunur (getBrightness yerine) -> belirgin hız artışı
- *  - Otomatik marker Y: işaret geode'nin gerçek derinliğine çizilir
+ *  - Otomatik marker Y: işaret chunk'ın en üstteki bloğuna çizilir
  *  - Sohbete "geode bulundu" bildirimi (chunk başına 1 kez, koordinat + mesafe + yön)
  *  - HUD: geode sayısı, sweep yüzdesi, en yakın geode mesafesi/yönü, tarama süresi
  *  - Tracer: en yakın geode'ye çizgi
@@ -48,6 +49,7 @@ import net.minecraft.world.level.levelgen.Heightmap;
  *  - Sprite artık blok blok değil, birleştirilmiş dikdörtgenlerle çizilir (daha az draw call)
  *  - Bud sayımı: ışık seviyesinden cluster/large/medium/small ayrımı çıkarılır ve
  *    HUD ile sohbet bildiriminde gösterilir
+ *  - Bud ESP: işaretli chunk'ın içindeki amethyst bud'ları mor dolu kutu olarak çizilir
  */
 public class ClusterBypass extends Module {
     private static final int BUD_LIGHT_MASK = (1 << 1) | (1 << 2) | (1 << 4) | (1 << 5);
@@ -125,6 +127,7 @@ public class ClusterBypass extends Module {
     private final SettingGroup sgFilter = settings.createGroup("Filter");
     private final SettingGroup sgNotify = settings.createGroup("Notify");
     private final SettingGroup sgRender = settings.createGroup("Render");
+    private final SettingGroup sgBud = settings.createGroup("Bud ESP");
 
     // ---- General ----
     private final Setting<Integer> chunkRange = sgGeneral.add(new IntSetting.Builder()
@@ -347,6 +350,47 @@ public class ClusterBypass extends Module {
         .sliderRange(4, 48)
         .build());
 
+    // ---- Bud ESP ----
+    private final Setting<Boolean> budEsp = sgBud.add(new BoolSetting.Builder()
+        .name("bud-esp")
+        .description("Draw every amethyst bud the scan found, so you see the geode shape while digging.")
+        .defaultValue(true)
+        .build());
+
+    private final Setting<Boolean> budMarkedOnly = sgBud.add(new BoolSetting.Builder()
+        .name("marked-only")
+        .description("Only draw buds of chunks that reached min-buds and confirm-sweeps.")
+        .defaultValue(true)
+        .build());
+
+    private final Setting<Boolean> budFilled = sgBud.add(new BoolSetting.Builder()
+        .name("bud-filled")
+        .description("Fill the bud boxes instead of drawing only their outline.")
+        .defaultValue(true)
+        .build());
+
+    private final Setting<Integer> budFillAlpha = sgBud.add(new IntSetting.Builder()
+        .name("bud-fill-alpha")
+        .description("Opacity of the filled part.")
+        .defaultValue(120)
+        .range(0, 255)
+        .sliderRange(0, 255)
+        .build());
+
+    private final Setting<Integer> budRange = sgBud.add(new IntSetting.Builder()
+        .name("bud-range")
+        .description("Only draw buds within this many blocks of you.")
+        .defaultValue(48)
+        .range(8, 256)
+        .sliderRange(8, 128)
+        .build());
+
+    private final Setting<SettingColor> budColor = sgBud.add(new ColorSetting.Builder()
+        .name("bud-color")
+        .description("Bud box color.")
+        .defaultValue(new SettingColor(200, 70, 255, 220))
+        .build());
+
     /** Bir chunk'ın tarama durumu. */
     private static final class ChunkState {
         int count;
@@ -356,6 +400,8 @@ public class ClusterBypass extends Module {
         boolean visited;
         /** Işık seviyesine göre bud sayısı: 5 = cluster, 4 = large, 2 = medium, 1 = small. */
         final int[] tiers = new int[6];
+        /** Bulunan bud konumları (BlockPos.asLong). */
+        long[] buds = new long[0];
 
         int avgYOr(int fallback) {
             return emitters > 0 ? ySum / emitters : fallback;
@@ -387,6 +433,7 @@ public class ClusterBypass extends Module {
     private int scanSumY;
     private int scanEmitters;
     private final int[] scanTiers = new int[6];
+    private final List<Long> scanBuds = new ArrayList<>();
     private double emaScanMs;
 
     private final List<int[]> markerCache = new ArrayList<>();
@@ -431,6 +478,7 @@ public class ClusterBypass extends Module {
         markerCache.clear();
         blockLayers.clear();
         skyLayers.clear();
+        scanBuds.clear();
         growthCache = new long[0];
         cursor = 0;
         sweepIndex = 0;
@@ -506,6 +554,7 @@ public class ClusterBypass extends Module {
 
             scanSumY = 0;
             scanEmitters = 0;
+            scanBuds.clear();
             Arrays.fill(scanTiers, 0);
             int found = scanChunk(level, c[0], c[1], bottom, top);
 
@@ -539,6 +588,10 @@ public class ClusterBypass extends Module {
             state.ySum = scanSumY;
             state.emitters = scanEmitters;
             state.copyTiers(scanTiers);
+
+            long[] budArray = new long[scanBuds.size()];
+            for (int i = 0; i < budArray.length; i++) budArray[i] = scanBuds.get(i);
+            state.buds = budArray;
 
             if (found != oldCount || state.confirms == confirm) dataVersion++;
 
@@ -695,6 +748,7 @@ public class ClusterBypass extends Module {
                         scanSumY += y;
                         scanEmitters++;
                         scanTiers[light]++;
+                        scanBuds.add(BlockPos.asLong(wx, y, wz));
                     }
                 }
             }
@@ -856,12 +910,21 @@ public class ClusterBypass extends Module {
         if (mc.level == null || mc.player == null || mc.level != lastLevel || chunks.isEmpty()) return;
 
         refreshCache();
-        if (markerCache.isEmpty()) return;
 
         int pcx = mc.player.blockPosition().getX() >> 4;
         int pcz = mc.player.blockPosition().getZ() >> 4;
         int r = chunkRange.get();
         double baseY = markerY.get();
+
+        int min = minimum.get();
+        int confirm = confirmSweeps.get();
+
+        // --- bud ESP: işaretli chunk'ın içindeki amethyst bud'ları ---
+        if (budEsp.get()) {
+            renderBuds(event, pcx, pcz, r, min, confirm);
+        }
+
+        if (markerCache.isEmpty()) return;
 
         if (showGrowthArea.get()) {
             int reach = r + growthRadius.get();
@@ -908,6 +971,42 @@ public class ClusterBypass extends Module {
                     mc.player.getX(), mc.player.getEyeY(), mc.player.getZ(),
                     nearest[0] * 16.0 + 8.0, nearest[2] + 0.5, nearest[1] * 16.0 + 8.0,
                     tracerColor.get());
+            }
+        }
+    }
+
+    private void renderBuds(Render3DEvent event, int pcx, int pcz, int r, int min, int confirm) {
+        Color line = budColor.get();
+        Color side = new Color(line.r, line.g, line.b, budFillAlpha.get());
+        ShapeMode mode = budFilled.get() ? ShapeMode.Both : ShapeMode.Lines;
+
+        double rangeSq = (double) budRange.get() * budRange.get();
+        double px = mc.player.getX();
+        double py = mc.player.getY();
+        double pz = mc.player.getZ();
+
+        boolean markedOnly = budMarkedOnly.get();
+
+        for (Map.Entry<Long, ChunkState> e : chunks.entrySet()) {
+            ChunkState s = e.getValue();
+            if (s.buds.length == 0) continue;
+            if (markedOnly && (s.count < min || s.confirms < confirm)) continue;
+
+            long ck = e.getKey();
+            if (Math.abs(keyX(ck) - pcx) > r || Math.abs(keyZ(ck) - pcz) > r) continue;
+
+            for (long p : s.buds) {
+                int x = BlockPos.getX(p);
+                int y = BlockPos.getY(p);
+                int z = BlockPos.getZ(p);
+
+                double dx = x + 0.5 - px;
+                double dy = y + 0.5 - py;
+                double dz = z + 0.5 - pz;
+                if (dx * dx + dy * dy + dz * dz > rangeSq) continue;
+
+                event.renderer.box(new AABB(x + 0.15, y + 0.15, z + 0.15, x + 0.85, y + 0.85, z + 0.85),
+                    side, line, mode, 0);
             }
         }
     }

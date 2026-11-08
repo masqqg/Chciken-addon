@@ -6,7 +6,6 @@ import com.example.addon.hud.HudExample;
 import com.example.addon.modules.ChickenStorageESP;
 import com.example.addon.modules.ClusterBypass;
 import com.example.addon.modules.ClearRender;
-import com.example.addon.modules.MobActivityFinder;
 import com.example.addon.modules.SpawnerFlag;
 import com.example.addon.modules.SusChunkFinder;
 
@@ -34,7 +33,6 @@ public class AddonTemplate extends MeteorAddon {
         Modules.get().add(new ChickenStorageESP());
         Modules.get().add(new ClusterBypass());
         Modules.get().add(new ClearRender());
-        Modules.get().add(new MobActivityFinder());
         Modules.get().add(new SpawnerFlag());
         Modules.get().add(new SusChunkFinder());
 
