@@ -1,6 +1,14 @@
 package com.example.addon.modules;
 
 import com.example.addon.AddonTemplate;
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import java.io.File;
+import java.io.Reader;
+import java.io.Writer;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -9,6 +17,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.Set;
+import meteordevelopment.meteorclient.MeteorClient;
+import meteordevelopment.meteorclient.events.game.GameLeftEvent;
 import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
@@ -35,7 +45,7 @@ import net.minecraft.world.phys.AABB;
 
 /**
  * Blok ışığı verisinden amethyst geode'larını bulur (blok state'i okumaz).
- * ClusterBypass v7
+ * ClusterBypass v8
  *
  * v6 yenilikleri:
  *  - Işık, section DataLayer'larından okunur (getBrightness yerine) -> belirgin hız artışı
@@ -53,10 +63,17 @@ import net.minecraft.world.phys.AABB;
  *  - Işık budun kendisinde değil çevresindeki Air bloklarında olduğunda, budun merkezi 6 yönlü
  *    ışık deseninden (açık Air yüzleri / kapalı duvar yüzleri) çözülür ve ESP merkeze çizilir
  *  - HUD ve sohbet bildirimi sadece büyük bud sayısını gösterir
+ *
+ * v8 yenilikleri:
+ *  - Bulunan geodelar diske kaydedilir (meteor-client/cluster-bypass-geodes.json) ve
+ *    modül açılınca geri yüklenir; menzilden çıkınca veya oyun kapanınca kaybolmazlar
  */
 public class ClusterBypass extends Module {
     /** Büyük amethyst bud ışık seviyesi (küçük=1, orta=2, büyük=4, cluster=5). */
     private static final int LARGE_BUD_LIGHT = 4;
+
+    private static final String GEODE_FILE = "cluster-bypass-geodes.json";
+    private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
     private static final int QUIET_FULL_SCANS = 3;
     private static final int COLD_PERIOD = 5;
@@ -131,6 +148,7 @@ public class ClusterBypass extends Module {
     private final SettingGroup sgNotify = settings.createGroup("Notify");
     private final SettingGroup sgRender = settings.createGroup("Render");
     private final SettingGroup sgBud = settings.createGroup("Bud ESP");
+    private final SettingGroup sgSave = settings.createGroup("Save");
 
     // ---- General ----
     private final Setting<Integer> chunkRange = sgGeneral.add(new IntSetting.Builder()
@@ -388,6 +406,21 @@ public class ClusterBypass extends Module {
         .defaultValue(new SettingColor(200, 70, 255, 220))
         .build());
 
+    // ---- Save ----
+    private final Setting<Boolean> persist = sgSave.add(new BoolSetting.Builder()
+        .name("save-geodes")
+        .description("Save found geode markers to disk and load them again on restart.")
+        .defaultValue(true)
+        .build());
+
+    private final Setting<Integer> saveInterval = sgSave.add(new IntSetting.Builder()
+        .name("save-interval")
+        .description("Seconds between automatic saves while geode data changes.")
+        .defaultValue(15)
+        .range(5, 300)
+        .sliderRange(5, 120)
+        .build());
+
     /** Bir chunk'ın tarama durumu. */
     private static final class ChunkState {
         int count;
@@ -395,12 +428,31 @@ public class ClusterBypass extends Module {
         int ySum;
         int emitters;
         boolean visited;
+        /** Bir kez onaylanan geode menzilden çıkınca silinmez ve diske yazılır. */
+        boolean persistent;
+        /** auto-y için önbelleklenmiş işaret Y'si. */
+        int markY = Integer.MIN_VALUE;
         /** Bulunan büyük bud merkezleri (BlockPos.asLong). */
         long[] buds = new long[0];
 
         int avgYOr(int fallback) {
             return emitters > 0 ? ySum / emitters : fallback;
         }
+    }
+
+    /** Diske yazılan tek bir geode. */
+    private static final class SavedGeode {
+        int x;
+        int z;
+        int y;
+        int count;
+        boolean visited;
+        long[] buds;
+    }
+
+    private static final class SaveFile {
+        int version = 1;
+        List<SavedGeode> geodes = new ArrayList<>();
     }
 
     private final Map<Long, ChunkState> chunks = new HashMap<>();
@@ -431,6 +483,8 @@ public class ClusterBypass extends Module {
     private int dataVersion;
     private int cacheVersion = -1;
     private int cacheSignature;
+    private boolean saveDirty;
+    private long lastSaveMs;
 
     public ClusterBypass() {
         super(AddonTemplate.CATEGORY, "cluster-bypass", "Marks chunks when block-light bud sources reach the configured minimum.");
@@ -452,12 +506,19 @@ public class ClusterBypass extends Module {
     public void onActivate() {
         reset();
         lastLevel = null;
+        loadGeodes();
     }
 
     @Override
     public void onDeactivate() {
+        saveGeodes();
         reset();
         lastLevel = null;
+    }
+
+    @EventHandler
+    private void onGameLeft(GameLeftEvent event) {
+        saveGeodes();
     }
 
     private void reset() {
@@ -481,6 +542,91 @@ public class ClusterBypass extends Module {
         dataVersion++;
     }
 
+    // ------------------------------------------------------------------ save
+
+    private static File geodeFile() {
+        return new File(MeteorClient.FOLDER, GEODE_FILE);
+    }
+
+    /** Onaylanmış geodeları diske yazar; hata olursa sohbete uyarı basar. */
+    private void saveGeodes() {
+        if (!persist.get() || !saveDirty) return;
+
+        SaveFile data = new SaveFile();
+
+        for (Map.Entry<Long, ChunkState> e : chunks.entrySet()) {
+            ChunkState s = e.getValue();
+            if (!s.persistent) continue;
+
+            SavedGeode g = new SavedGeode();
+            g.x = keyX(e.getKey());
+            g.z = keyZ(e.getKey());
+            g.y = s.markY != Integer.MIN_VALUE ? s.markY : s.avgYOr(markerY.get());
+            g.count = s.count;
+            g.visited = s.visited;
+            g.buds = s.buds;
+            data.geodes.add(g);
+        }
+
+        File file = geodeFile();
+        File tmp = new File(file.getPath() + ".tmp");
+
+        try {
+            if (!MeteorClient.FOLDER.exists()) MeteorClient.FOLDER.mkdirs();
+
+            try (Writer writer = Files.newBufferedWriter(tmp.toPath(), StandardCharsets.UTF_8)) {
+                GSON.toJson(data, writer);
+            }
+
+            Files.move(tmp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            saveDirty = false;
+            lastSaveMs = System.currentTimeMillis();
+        } catch (Exception e) {
+            warning("Could not save geodes: %s", e.getMessage());
+        }
+    }
+
+    /** Diskten kaydedilmiş geodeları yükler (modül açılınca / dünyaya girince). */
+    private void loadGeodes() {
+        if (!persist.get()) return;
+
+        File file = geodeFile();
+        if (!file.isFile()) return;
+
+        try (Reader reader = Files.newBufferedReader(file.toPath(), StandardCharsets.UTF_8)) {
+            SaveFile data = GSON.fromJson(reader, SaveFile.class);
+            if (data == null || data.geodes == null) return;
+
+            int loaded = 0;
+
+            for (SavedGeode g : data.geodes) {
+                if (g == null) continue;
+
+                ChunkState s = new ChunkState();
+                s.count = Math.max(0, g.count);
+                s.confirms = 100;
+                s.emitters = Math.max(1, s.count);
+                s.ySum = g.y * s.emitters;
+                s.visited = g.visited;
+                s.persistent = true;
+                s.markY = g.y;
+                s.buds = g.buds != null ? g.buds : new long[0];
+
+                long k = key(g.x, g.z);
+                chunks.put(k, s);
+                announced.add(k);
+                loaded++;
+            }
+
+            if (loaded > 0) {
+                dataVersion++;
+                if (debug.get()) info("Loaded %d saved geode(s)", loaded);
+            }
+        } catch (Exception e) {
+            warning("Could not load saved geodes: %s", e.getMessage());
+        }
+    }
+
     // ------------------------------------------------------------------ tick
 
     @EventHandler
@@ -488,9 +634,15 @@ public class ClusterBypass extends Module {
         Level level = mc.level;
         if (level == null || mc.player == null) return;
 
+        if (saveDirty && System.currentTimeMillis() - lastSaveMs >= saveInterval.get() * 1000L) {
+            saveGeodes();
+        }
+
         if (level != lastLevel) {
+            saveGeodes();
             reset();
             lastLevel = level;
+            loadGeodes();
         }
 
         if (overworldOnly.get() && mc.level.dimension() != Level.OVERWORLD) {
@@ -555,7 +707,7 @@ public class ClusterBypass extends Module {
 
             if (found == 0) {
                 quiet.merge(k, 1, (a, b) -> Math.min(a + b, 1000));
-                if (state != null) {
+                if (state != null && !state.persistent) {
                     chunks.remove(k);
                     dataVersion++;
                 }
@@ -580,7 +732,18 @@ public class ClusterBypass extends Module {
             for (int i = 0; i < budArray.length; i++) budArray[i] = scanBuds.get(i);
             state.buds = budArray;
 
-            if (found != oldCount || state.confirms == confirm) dataVersion++;
+            if (found != oldCount) state.markY = topYOf(c[0], c[1]);
+            if (found != oldCount || state.confirms == confirm) {
+                dataVersion++;
+                saveDirty = true;
+            }
+
+            // Bir kez onaylanan geode kalıcıdır: menzilden çıkınca silinmez.
+            if (!state.persistent && state.count >= needed && state.confirms >= confirm) {
+                state.persistent = true;
+                saveDirty = true;
+                saveGeodes();
+            }
 
             if (debug.get() && found != oldCount) {
                 info("chunk %d,%d: large buds=%d (y~%d)", c[0], c[1], found, state.avgYOr(fallbackY));
@@ -639,7 +802,8 @@ public class ClusterBypass extends Module {
 
         for (Map.Entry<Long, ChunkState> e : chunks.entrySet()) {
             ChunkState s = e.getValue();
-            if (s.visited || s.count < min || s.confirms < confirm) continue;
+            if (s.visited) continue;
+            if (!s.persistent && (s.count < min || s.confirms < confirm)) continue;
 
             double dx = (keyX(e.getKey()) * 16.0 + 8.0) - px;
             double dy = s.avgYOr(fallbackY) - py;
@@ -651,7 +815,10 @@ public class ClusterBypass extends Module {
             }
         }
 
-        if (changed) dataVersion++;
+        if (changed) {
+            dataVersion++;
+            saveDirty = true;
+        }
     }
 
     // ------------------------------------------------------------------ scan
@@ -684,7 +851,11 @@ public class ClusterBypass extends Module {
 
         queue.sort(Comparator.comparingInt(a -> a[2]));
 
-        boolean removed = chunks.keySet().removeIf(k -> isStale(level, k, pcx, pcz, r));
+        boolean removed = chunks.keySet().removeIf(k -> {
+            if (!isStale(level, k, pcx, pcz, r)) return false;
+            ChunkState s = chunks.get(k);
+            return s == null || !s.persistent;
+        });
         quiet.keySet().removeIf(k -> isStale(level, k, pcx, pcz, r));
         if (removed) dataVersion++;
     }
@@ -882,12 +1053,19 @@ public class ClusterBypass extends Module {
 
         for (Map.Entry<Long, ChunkState> e : chunks.entrySet()) {
             ChunkState s = e.getValue();
-            if (s.count < min || s.confirms < confirm) continue;
+            if (!s.persistent && (s.count < min || s.confirms < confirm)) continue;
             if (skipVisited && s.visited) continue;
 
             int cx = keyX(e.getKey());
             int cz = keyZ(e.getKey());
-            int markY = autoY.get() ? topYOf(cx, cz) : s.avgYOr(fallbackY);
+            int markY;
+
+            if (autoY.get()) {
+                if (s.markY == Integer.MIN_VALUE) s.markY = topYOf(cx, cz);
+                markY = s.markY;
+            } else {
+                markY = s.avgYOr(fallbackY);
+            }
 
             markerCache.add(new int[]{cx, cz, markY, s.count});
 
@@ -1025,7 +1203,7 @@ public class ClusterBypass extends Module {
         for (Map.Entry<Long, ChunkState> e : chunks.entrySet()) {
             ChunkState s = e.getValue();
             if (s.buds.length == 0) continue;
-            if (markedOnly && (s.count < min || s.confirms < confirm)) continue;
+            if (markedOnly && !s.persistent && (s.count < min || s.confirms < confirm)) continue;
 
             long ck = e.getKey();
             if (Math.abs(keyX(ck) - pcx) > r || Math.abs(keyZ(ck) - pcz) > r) continue;
@@ -1076,7 +1254,7 @@ public class ClusterBypass extends Module {
         TextRenderer renderer = TextRenderer.get();
         renderer.begin(1.0);
 
-        renderer.render(String.format("ClusterBypass v7 | Geodes: %d | Large buds: %d | sweep %d%% | %.1fms",
+        renderer.render(String.format("ClusterBypass v8 | Geodes: %d | Large buds: %d | sweep %d%% | %.1fms",
             markerCache.size(), totalBuds, pct, emaScanMs), x, y, color);
 
         double cy = y + lineHeight;
