@@ -2,7 +2,6 @@ package com.example.addon.modules;
 
 import com.example.addon.AddonTemplate;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -36,7 +35,7 @@ import net.minecraft.world.phys.AABB;
 
 /**
  * Blok ışığı verisinden amethyst geode'larını bulur (blok state'i okumaz).
- * ClusterBypass v6
+ * ClusterBypass v7
  *
  * v6 yenilikleri:
  *  - Işık, section DataLayer'larından okunur (getBrightness yerine) -> belirgin hız artışı
@@ -47,13 +46,17 @@ import net.minecraft.world.phys.AABB;
  *  - Ziyaret edilen geodeları gizleme
  *  - Overworld filtresi ve ayar değişince kuyruğu otomatik yenileme
  *  - Sprite artık blok blok değil, birleştirilmiş dikdörtgenlerle çizilir (daha az draw call)
- *  - Bud sayımı: ışık seviyesinden cluster/large/medium/small ayrımı çıkarılır ve
- *    HUD ile sohbet bildiriminde gösterilir
  *  - Bud ESP: işaretli chunk'ın içindeki amethyst bud'ları mor dolu kutu olarak çizilir
+ *
+ * v7 yenilikleri:
+ *  - Artık sadece büyük amethyst bud'lar taranır (ışık seviyesi 4); küçük/orta bud ve cluster yok sayılır
+ *  - Işık budun kendisinde değil çevresindeki Air bloklarında olduğunda, budun merkezi 6 yönlü
+ *    ışık deseninden (açık Air yüzleri / kapalı duvar yüzleri) çözülür ve ESP merkeze çizilir
+ *  - HUD ve sohbet bildirimi sadece büyük bud sayısını gösterir
  */
 public class ClusterBypass extends Module {
-    private static final int BUD_LIGHT_MASK = (1 << 1) | (1 << 2) | (1 << 4) | (1 << 5);
-    private static final int MAX_BUD_LIGHT = 5;
+    /** Büyük amethyst bud ışık seviyesi (küçük=1, orta=2, büyük=4, cluster=5). */
+    private static final int LARGE_BUD_LIGHT = 4;
 
     private static final int QUIET_FULL_SCANS = 3;
     private static final int COLD_PERIOD = 5;
@@ -178,15 +181,15 @@ public class ClusterBypass extends Module {
 
     private final Setting<Boolean> debug = sgGeneral.add(new BoolSetting.Builder()
         .name("debug")
-        .description("Print bud counts in chat when a chunk changes.")
+        .description("Print large-bud counts in chat when a chunk changes.")
         .defaultValue(false)
         .build());
 
     // ---- Filter ----
     private final Setting<Integer> minimum = sgFilter.add(new IntSetting.Builder()
         .name("min-buds")
-        .description("Bud light sources needed to mark a chunk.")
-        .defaultValue(8)
+        .description("Large-bud centers needed to mark a chunk.")
+        .defaultValue(3)
         .range(1, 200)
         .sliderRange(1, 60)
         .build());
@@ -283,12 +286,6 @@ public class ClusterBypass extends Module {
         .sliderRange(0, 5)
         .build());
 
-    private final Setting<Boolean> hudDetails = sgRender.add(new BoolSetting.Builder()
-        .name("hud-bud-details")
-        .description("Also show the bud type breakdown (cluster/large/medium/small).")
-        .defaultValue(true)
-        .build());
-
     private final Setting<SettingColor> sideColor = sgRender.add(new ColorSetting.Builder()
         .name("side-color")
         .description("Marker fill color.")
@@ -353,7 +350,7 @@ public class ClusterBypass extends Module {
     // ---- Bud ESP ----
     private final Setting<Boolean> budEsp = sgBud.add(new BoolSetting.Builder()
         .name("bud-esp")
-        .description("Draw every amethyst bud the scan found, so you see the geode shape while digging.")
+        .description("Draw every large amethyst bud the scan found, so you see the geode shape while digging.")
         .defaultValue(true)
         .build());
 
@@ -398,17 +395,11 @@ public class ClusterBypass extends Module {
         int ySum;
         int emitters;
         boolean visited;
-        /** Işık seviyesine göre bud sayısı: 5 = cluster, 4 = large, 2 = medium, 1 = small. */
-        final int[] tiers = new int[6];
-        /** Bulunan bud konumları (BlockPos.asLong). */
+        /** Bulunan büyük bud merkezleri (BlockPos.asLong). */
         long[] buds = new long[0];
 
         int avgYOr(int fallback) {
             return emitters > 0 ? ySum / emitters : fallback;
-        }
-
-        void copyTiers(int[] src) {
-            System.arraycopy(src, 0, tiers, 0, tiers.length);
         }
     }
 
@@ -432,7 +423,6 @@ public class ClusterBypass extends Module {
 
     private int scanSumY;
     private int scanEmitters;
-    private final int[] scanTiers = new int[6];
     private final List<Long> scanBuds = new ArrayList<>();
     private double emaScanMs;
 
@@ -486,7 +476,6 @@ public class ClusterBypass extends Module {
         visitedTimer = 0;
         scanSumY = 0;
         scanEmitters = 0;
-        Arrays.fill(scanTiers, 0);
         emaScanMs = 0.0;
         sinceSweep = Integer.MAX_VALUE / 2;
         dataVersion++;
@@ -555,7 +544,6 @@ public class ClusterBypass extends Module {
             scanSumY = 0;
             scanEmitters = 0;
             scanBuds.clear();
-            Arrays.fill(scanTiers, 0);
             int found = scanChunk(level, c[0], c[1], bottom, top);
 
             if (found > limit) {
@@ -587,7 +575,6 @@ public class ClusterBypass extends Module {
             if (state.confirms < 100) state.confirms++;
             state.ySum = scanSumY;
             state.emitters = scanEmitters;
-            state.copyTiers(scanTiers);
 
             long[] budArray = new long[scanBuds.size()];
             for (int i = 0; i < budArray.length; i++) budArray[i] = scanBuds.get(i);
@@ -596,14 +583,12 @@ public class ClusterBypass extends Module {
             if (found != oldCount || state.confirms == confirm) dataVersion++;
 
             if (debug.get() && found != oldCount) {
-                info("chunk %d,%d: buds=%d [C%d L%d M%d S%d] (y~%d)", c[0], c[1], found,
-                    state.tiers[5], state.tiers[4], state.tiers[2], state.tiers[1], state.avgYOr(fallbackY));
+                info("chunk %d,%d: large buds=%d (y~%d)", c[0], c[1], found, state.avgYOr(fallbackY));
             }
 
             // Yeni onaylanan geode -> tek seferlik bildirim.
             if (chatNotify.get() && found >= needed && state.confirms >= confirm && announced.add(k)) {
-                notifyFound(c[0], c[1], state.avgYOr(fallbackY), state.count,
-                    state.tiers[5], state.tiers[4], state.tiers[2], state.tiers[1]);
+                notifyFound(c[0], c[1], state.avgYOr(fallbackY), state.count);
             }
         }
 
@@ -615,7 +600,7 @@ public class ClusterBypass extends Module {
         return ((chunkRange.get() * 31 + minY.get()) * 31 + maxY.get()) * 31 + sweepTicks.get();
     }
 
-    private void notifyFound(int cx, int cz, int y, int buds, int clusters, int large, int medium, int small) {
+    private void notifyFound(int cx, int cz, int y, int buds) {
         int centerX = (cx << 4) + 8;
         int centerZ = (cz << 4) + 8;
 
@@ -624,8 +609,8 @@ public class ClusterBypass extends Module {
         double dz = centerZ + 0.5 - mc.player.getZ();
         int dist = (int) Math.round(Math.sqrt(dx * dx + dy * dy + dz * dz));
 
-        info("Geode: %d, %d, %d (%dm %s) | %d buds [C%d L%d M%d S%d]",
-            centerX, y, centerZ, dist, compass(dx, dz), buds, clusters, large, medium, small);
+        info("Geode: %d, %d, %d (%dm %s) | %d large buds",
+            centerX, y, centerZ, dist, compass(dx, dz), buds);
     }
 
     private static String compass(double dx, double dz) {
@@ -720,7 +705,8 @@ public class ClusterBypass extends Module {
 
         int bx = cx << 4;
         int bz = cz << 4;
-        int count = 0;
+        // Aynı budun birden fazla ışık alan Air yüzü aynı merkeze çözülsün diye set.
+        Set<Long> centers = new HashSet<>();
 
         for (int sy = lo >> 4; sy <= hi >> 4; sy++) {
             DataLayer arr = layer(blockLayers, blockLight, cx, sy, cz);
@@ -737,24 +723,31 @@ public class ClusterBypass extends Module {
 
                     for (int z = 0; z < 16; z++) {
                         int light = arr.get(x, ly, z);
-                        if (light < 1 || light > MAX_BUD_LIGHT) continue;
-                        if (((BUD_LIGHT_MASK >> light) & 1) == 0) continue;
+                        if (light != LARGE_BUD_LIGHT) continue;
 
                         int wz = bz + z;
                         if (underground && skyLightAt(wx, y, wz) > 0) continue;
                         if (!isEmitter(wx, y, wz, light, bottom, top, falloff)) continue;
 
-                        count++;
-                        scanSumY += y;
+                        // Işık çoğu zaman budun kendisinde değil, yanındaki Air bloğundadır.
+                        // 6 yönlü desenden gerçek bud merkezini çöz.
+                        long center = resolveBudCenter(wx, y, wz);
+                        int centerX = BlockPos.getX(center);
+                        int centerZ = BlockPos.getZ(center);
+
+                        // Merkez başka chunk'taysa o chunk'ın taraması sayar (çift sayım olmasın).
+                        if ((centerX >> 4) != cx || (centerZ >> 4) != cz) continue;
+                        if (!centers.add(center)) continue;
+
+                        scanSumY += BlockPos.getY(center);
                         scanEmitters++;
-                        scanTiers[light]++;
-                        scanBuds.add(BlockPos.asLong(wx, y, wz));
+                        scanBuds.add(center);
                     }
                 }
             }
         }
 
-        return count;
+        return centers.size();
     }
 
     private boolean isEmitter(int x, int y, int z, int light, int bottom, int top, boolean falloff) {
@@ -771,6 +764,52 @@ public class ClusterBypass extends Module {
         }
 
         return !falloff || hasFalloff;
+    }
+
+    /**
+     * Büyük bud ışığı çoğu sunucuda budun kendisinde değil, çevresindeki Air
+     * bloklarında görünür; bu yüzden ışık noktası tek başına merkez değildir.
+     *
+     * Bir bloğun 6 yönüne bakılır: budun Air'e bakan (açık) yüzleri ışık alır,
+     * geode duvarına bakan (kapalı) yüzleri almaz. Birden fazla ışık noktasının
+     * ortak komşusu olan blok budun merkezidir. Böyle bir blok yoksa (ışık zaten
+     * budun kendi bloğundaysa) ışık noktasının kendisi merkez kabul edilir.
+     */
+    private long resolveBudCenter(int x, int y, int z) {
+        long fallback = BlockPos.asLong(x, y, z);
+        long best = fallback;
+        int bestOpen = 0;
+
+        for (Direction dir : DIRS) {
+            int nx = x + dir.getStepX();
+            int ny = y + dir.getStepY();
+            int nz = z + dir.getStepZ();
+
+            // Merkez adayı Air olamaz: Air ışık alır. Bud ise karanlık (ışık
+            // sunucuda budun üstünde tutulmuyorsa) veya kendi ışığını taşır.
+            int own = blockLightAt(nx, ny, nz);
+            if (own != 0 && own != LARGE_BUD_LIGHT) continue;
+
+            int open = openFaces(nx, ny, nz);
+            if (open > bestOpen) {
+                bestOpen = open;
+                best = BlockPos.asLong(nx, ny, nz);
+            }
+        }
+
+        // Tek açık yüz belirsizdir (duvar bloğu da olabilir); ışık noktasını kullan.
+        return bestOpen >= 2 ? best : fallback;
+    }
+
+    /** Bloğun 6 yönünden kaç tanesi büyük bud ışığı (açık Air yüzü) alıyor? */
+    private int openFaces(int x, int y, int z) {
+        int open = 0;
+
+        for (Direction dir : DIRS) {
+            if (blockLightAt(x + dir.getStepX(), y + dir.getStepY(), z + dir.getStepZ()) == LARGE_BUD_LIGHT) open++;
+        }
+
+        return open;
     }
 
     // ------------------------------------------------------------------ light
@@ -850,10 +889,7 @@ public class ClusterBypass extends Module {
             int cz = keyZ(e.getKey());
             int markY = autoY.get() ? topYOf(cx, cz) : s.avgYOr(fallbackY);
 
-            markerCache.add(new int[]{
-                cx, cz, markY, s.count,
-                s.tiers[5], s.tiers[4], s.tiers[2], s.tiers[1]
-            });
+            markerCache.add(new int[]{cx, cz, markY, s.count});
 
             if (growth) {
                 for (int dx = -gr; dx <= gr; dx++) {
@@ -879,10 +915,9 @@ public class ClusterBypass extends Module {
         return dx * dx + dz * dz;
     }
 
-    /** Bud sayısını (istenirse tür dağılımıyla) metne çevirir. */
-    private static String budsText(int[] m, boolean details) {
-        if (!details) return String.format("%d buds", m[3]);
-        return String.format("%d buds [C%d L%d M%d S%d]", m[3], m[4], m[5], m[6], m[7]);
+    /** Büyük bud sayısını metne çevirir. */
+    private static String budsText(int[] m) {
+        return String.format("%d large buds", m[3]);
     }
 
     private int[] nearestMarker() {
@@ -1037,12 +1072,11 @@ public class ClusterBypass extends Module {
 
         int pct = queue.isEmpty() ? 100 : cursor * 100 / queue.size();
         int listSize = Math.min(hudGeodeList.get(), markerCache.size());
-        boolean details = hudDetails.get();
 
         TextRenderer renderer = TextRenderer.get();
         renderer.begin(1.0);
 
-        renderer.render(String.format("ClusterBypass v6 | Geodes: %d | Buds: %d | sweep %d%% | %.1fms",
+        renderer.render(String.format("ClusterBypass v7 | Geodes: %d | Large buds: %d | sweep %d%% | %.1fms",
             markerCache.size(), totalBuds, pct, emaScanMs), x, y, color);
 
         double cy = y + lineHeight;
@@ -1056,7 +1090,7 @@ public class ClusterBypass extends Module {
                 double dz = m[1] * 16.0 + 8.0 - mc.player.getZ();
                 int dist = (int) Math.round(Math.sqrt(dx * dx + dz * dz));
 
-                renderer.render(String.format("#%d %dm %s | %s", i + 1, dist, compass(dx, dz), budsText(m, details)),
+                renderer.render(String.format("#%d %dm %s | %s", i + 1, dist, compass(dx, dz), budsText(m)),
                     x, cy, color);
                 cy += lineHeight;
             }
@@ -1068,7 +1102,7 @@ public class ClusterBypass extends Module {
                 double dx = nearest[0] * 16.0 + 8.0 - mc.player.getX();
                 double dz = nearest[1] * 16.0 + 8.0 - mc.player.getZ();
                 near = String.format("nearest: %dm %s | %s",
-                    (int) Math.round(Math.sqrt(dx * dx + dz * dz)), compass(dx, dz), budsText(nearest, details));
+                    (int) Math.round(Math.sqrt(dx * dx + dz * dz)), compass(dx, dz), budsText(nearest));
             }
 
             renderer.render(near, x, cy, color);
