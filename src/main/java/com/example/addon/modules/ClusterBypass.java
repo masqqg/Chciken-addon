@@ -31,6 +31,7 @@ import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.level.chunk.DataLayer;
 import net.minecraft.world.level.lighting.LayerLightEventListener;
 import net.minecraft.world.phys.AABB;
+import net.minecraft.world.level.levelgen.Heightmap;
 
 /**
  * Blok ışığı verisinden amethyst geode'larını bulur (blok state'i okumaz).
@@ -233,7 +234,7 @@ public class ClusterBypass extends Module {
 
     private final Setting<Boolean> autoY = sgRender.add(new BoolSetting.Builder()
         .name("auto-y")
-        .description("Draw the marker at the average Y of the light sources instead of marker-y.")
+        .description("Draw the marker at the highest block of that chunk instead of marker-y.")
         .defaultValue(true)
         .build());
 
@@ -747,6 +748,22 @@ public class ClusterBypass extends Module {
 
     // ------------------------------------------------------------------ cache
 
+    /** Chunk'un en ustundeki blok (yuzey) Y'si. */
+    private int topYOf(int cx, int cz) {
+        if (mc.level == null) return markerY.get();
+
+        int top = mc.level.getMinY();
+
+        for (int x = 0; x < 16; x++) {
+            for (int z = 0; z < 16; z++) {
+                int y = mc.level.getHeight(Heightmap.Types.MOTION_BLOCKING, (cx << 4) + x, (cz << 4) + z);
+                if (y > top) top = y;
+            }
+        }
+
+        return top;
+    }
+
     private void refreshCache() {
         int min = minimum.get();
         int confirm = confirmSweeps.get();
@@ -761,6 +778,7 @@ public class ClusterBypass extends Module {
         signature = signature * 31 + fallbackY;
         signature = signature * 2 + (growth ? 1 : 0);
         signature = signature * 2 + (skipVisited ? 1 : 0);
+        signature = signature * 2 + (autoY.get() ? 1 : 0);
 
         if (cacheVersion == dataVersion && cacheSignature == signature) return;
         cacheVersion = dataVersion;
@@ -776,8 +794,10 @@ public class ClusterBypass extends Module {
 
             int cx = keyX(e.getKey());
             int cz = keyZ(e.getKey());
+            int markY = autoY.get() ? topYOf(cx, cz) : s.avgYOr(fallbackY);
+
             markerCache.add(new int[]{
-                cx, cz, s.avgYOr(fallbackY), s.count,
+                cx, cz, markY, s.count,
                 s.tiers[5], s.tiers[4], s.tiers[2], s.tiers[1]
             });
 

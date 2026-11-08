@@ -3,15 +3,12 @@ package com.example.addon;
 
 import com.example.addon.commands.CommandExample;
 import com.example.addon.hud.HudExample;
-import com.example.addon.modules.ChestPacketDebug;
 import com.example.addon.modules.ChickenStorageESP;
 import com.example.addon.modules.ClusterBypass;
 import com.example.addon.modules.ClearRender;
 import com.example.addon.modules.MobActivityFinder;
-import com.example.addon.modules.PlayerBypassV2;
 import com.example.addon.modules.SpawnerFlag;
 import com.example.addon.modules.SusChunkFinder;
-import com.example.addon.modules.SusChunkFinderV2;
 
 import com.mojang.logging.LogUtils;
 import meteordevelopment.meteorclient.addons.GithubRepo;
@@ -34,15 +31,12 @@ public class AddonTemplate extends MeteorAddon {
         LOG.info("Initializing Chicken Addon");
 
         // Modules
-        Modules.get().add(new ChestPacketDebug());
         Modules.get().add(new ChickenStorageESP());
         Modules.get().add(new ClusterBypass());
         Modules.get().add(new ClearRender());
         Modules.get().add(new MobActivityFinder());
-        Modules.get().add(new PlayerBypassV2());
         Modules.get().add(new SpawnerFlag());
         Modules.get().add(new SusChunkFinder());
-        Modules.get().add(new SusChunkFinderV2());
 
         // Commands
         Commands.add(new CommandExample());
