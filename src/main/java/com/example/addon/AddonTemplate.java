@@ -3,12 +3,11 @@ package com.example.addon;
 
 import com.example.addon.commands.CommandExample;
 import com.example.addon.hud.HudExample;
+import com.example.addon.modules.BaseFinder;
 import com.example.addon.modules.ChickenStorageESP;
 import com.example.addon.modules.ClusterBypass;
 import com.example.addon.modules.ClearRender;
-import com.example.addon.modules.FakeChat;
-import com.example.addon.modules.FakeScoreboard;
-import com.example.addon.modules.NameProtect;
+import com.example.addon.modules.PlayerFinder;
 import com.example.addon.modules.SpawnerFlag;
 import com.example.addon.modules.SusChunkFinder;
 
@@ -33,12 +32,11 @@ public class AddonTemplate extends MeteorAddon {
         LOG.info("Initializing Chicken Addon");
 
         // Modules
+        Modules.get().add(new BaseFinder());
         Modules.get().add(new ChickenStorageESP());
         Modules.get().add(new ClusterBypass());
         Modules.get().add(new ClearRender());
-        Modules.get().add(new FakeChat());
-        Modules.get().add(new FakeScoreboard());
-        Modules.get().add(new NameProtect());
+        Modules.get().add(new PlayerFinder());
         Modules.get().add(new SpawnerFlag());
         Modules.get().add(new SusChunkFinder());
 

@@ -2,6 +2,7 @@ package com.example.addon.modules;
 
 import com.example.addon.AddonTemplate;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -90,6 +91,9 @@ public class ChickenStorageESP extends Module {
     }
 
     private record EntityBox(AABB box, int group) {
+    }
+
+    private record TracerTarget(double x, double y, double z, Color color, double distance) {
     }
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -269,10 +273,10 @@ public class ChickenStorageESP extends Module {
 
     private final Setting<Integer> tracerRange = sgTracers.add(new IntSetting.Builder()
         .name("tracer-range")
-        .description("Only draw tracers for containers within this many blocks.")
-        .defaultValue(96)
+        .description("Only draw tracers for containers within this many blocks. 512 covers the full render distance.")
+        .defaultValue(512)
         .range(8, 512)
-        .sliderRange(8, 256)
+        .sliderRange(8, 512)
         .build());
 
     private final Setting<Integer> tracerLimit = sgTracers.add(new IntSetting.Builder()
@@ -361,6 +365,7 @@ public class ChickenStorageESP extends Module {
 
     /** Blok state'ten grup. -1 = storage degil. */
     private static int group(BlockState st) {
+        if (st == null) return -1;
         if (st.is(Blocks.CHEST) || st.is(Blocks.TRAPPED_CHEST)) return G_CHEST;
         if (st.is(Blocks.HOPPER)) return G_HOPPER;
         if (st.is(Blocks.BARREL) || st.is(Blocks.ENDER_CHEST) || st.is(BlockTags.SHULKER_BOXES)
@@ -374,6 +379,7 @@ public class ChickenStorageESP extends Module {
 
     /** Block entity tipinden grup. */
     private static int group(BlockEntityType<?> type) {
+        if (type == null) return -1;
         if (type == BlockEntityType.CHEST || type == BlockEntityType.TRAPPED_CHEST) return G_CHEST;
         if (type == BlockEntityType.HOPPER) return G_HOPPER;
         if (type == BlockEntityType.BARREL || type == BlockEntityType.ENDER_CHEST
@@ -566,7 +572,7 @@ public class ChickenStorageESP extends Module {
 
         // ---- container ekrani acildi: tiklanan blogu ogren ----
         if (event.packet instanceof ClientboundOpenScreenPacket p) {
-            if (!containerOpen.get() || mc.hitResult == null) return;
+            if (!containerOpen.get() || mc.hitResult == null || mc.level == null) return;
             if (!(mc.hitResult instanceof BlockHitResult hit)) return;
 
             int g = group(mc.level.getBlockState(hit.getBlockPos()));
@@ -903,37 +909,40 @@ public class ChickenStorageESP extends Module {
         double oy = tracerFromFeet.get() ? cam.y - 1.62 : cam.y;
         double oz = cam.z;
 
-        int drawn = 0;
+        List<TracerTarget> targets = new ArrayList<>();
 
         for (Map.Entry<Long, List<Entry>> e : cache.entrySet()) {
-            if (drawn >= limit) break;
             if (Math.abs(keyX(e.getKey()) - pcx) > r || Math.abs(keyZ(e.getKey()) - pcz) > r) continue;
 
             for (Entry entry : e.getValue()) {
-                if (drawn >= limit) break;
-
                 double tx = entry.pos().getX() + 0.5;
                 double ty = entry.pos().getY() + 0.5;
                 double tz = entry.pos().getZ() + 0.5;
+                double dist = Math.sqrt((tx - ox) * (tx - ox) + (ty - oy) * (ty - oy) + (tz - oz) * (tz - oz));
 
-                if (drawTracer(event, ox, oy, oz, tx, ty, tz, range, fadeFactor,
-                    entry.hidden() ? hidden : line[entry.group()])) {
-                    drawn++;
-                }
+                if (dist > range) continue;
+                targets.add(new TracerTarget(tx, ty, tz,
+                    entry.hidden() ? hidden : line[entry.group()], dist));
             }
         }
 
         for (EntityBox box : entityBoxes) {
-            if (drawn >= limit) break;
-
             AABB b = box.box();
             double tx = (b.minX + b.maxX) * 0.5;
             double ty = (b.minY + b.maxY) * 0.5;
             double tz = (b.minZ + b.maxZ) * 0.5;
+            double dist = Math.sqrt((tx - ox) * (tx - ox) + (ty - oy) * (ty - oy) + (tz - oz) * (tz - oz));
 
-            if (drawTracer(event, ox, oy, oz, tx, ty, tz, range, fadeFactor, line[box.group()])) {
-                drawn++;
-            }
+            if (dist > range) continue;
+            targets.add(new TracerTarget(tx, ty, tz, line[box.group()], dist));
+        }
+
+        // En yakin hedefler once cizilsin; boylece limit uzaktaki kutulari yemez.
+        targets.sort(Comparator.comparingDouble(TracerTarget::distance));
+
+        for (int i = 0; i < targets.size() && i < limit; i++) {
+            TracerTarget t = targets.get(i);
+            drawTracer(event, ox, oy, oz, t.x(), t.y(), t.z(), range, fadeFactor, t.color());
         }
     }
 

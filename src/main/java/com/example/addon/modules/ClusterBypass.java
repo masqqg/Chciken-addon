@@ -33,6 +33,7 @@ import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
+import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.SectionPos;
@@ -44,7 +45,7 @@ import net.minecraft.world.phys.AABB;
 
 /**
  * Blok ışığı verisinden amethyst geode'larını bulur (blok state'i okumaz).
- * ClusterBypass v9
+ * ClusterBypass v10
  *
  * v6 yenilikleri:
  *  - Işık, section DataLayer'larından okunur (getBrightness yerine) -> belirgin hız artışı
@@ -69,6 +70,9 @@ import net.minecraft.world.phys.AABB;
  *
  * v9 yenilikleri:
  *  - Chunk işaretleri artık her zaman sabit Y=64'te çizilir
+ *
+ * v10 yenilikleri:
+ *  - Sağ tarafta siyah-beyaz üstten harita: oyuncu oku + işaretli chunk'lar
  */
 public class ClusterBypass extends Module {
     /** Büyük amethyst bud ışık seviyesi (küçük=1, orta=2, büyük=4, cluster=5). */
@@ -153,6 +157,7 @@ public class ClusterBypass extends Module {
     private final SettingGroup sgRender = settings.createGroup("Render");
     private final SettingGroup sgBud = settings.createGroup("Bud ESP");
     private final SettingGroup sgSave = settings.createGroup("Save");
+    private final SettingGroup sgMap = settings.createGroup("Map");
 
     // ---- General ----
     private final Setting<Integer> chunkRange = sgGeneral.add(new IntSetting.Builder()
@@ -409,6 +414,65 @@ public class ClusterBypass extends Module {
         .defaultValue(15)
         .range(5, 300)
         .sliderRange(5, 120)
+        .build());
+
+    // ---- Map ----
+    private final Setting<Boolean> map = sgMap.add(new BoolSetting.Builder()
+        .name("map")
+        .description("Show a black-and-white top-down map while the module is active.")
+        .defaultValue(true)
+        .build());
+
+    private final Setting<Integer> mapSize = sgMap.add(new IntSetting.Builder()
+        .name("map-size")
+        .description("Map width and height in pixels.")
+        .defaultValue(128)
+        .range(64, 320)
+        .sliderRange(64, 256)
+        .build());
+
+    private final Setting<Integer> mapRange = sgMap.add(new IntSetting.Builder()
+        .name("map-range")
+        .description("How many chunks around the player the map shows.")
+        .defaultValue(8)
+        .range(2, 24)
+        .sliderRange(2, 16)
+        .build());
+
+    private final Setting<Integer> mapX = sgMap.add(new IntSetting.Builder()
+        .name("map-x")
+        .description("Distance from the right screen edge.")
+        .defaultValue(8)
+        .range(0, 500)
+        .sliderRange(0, 200)
+        .build());
+
+    private final Setting<Integer> mapY = sgMap.add(new IntSetting.Builder()
+        .name("map-y")
+        .description("Distance from the top screen edge.")
+        .defaultValue(8)
+        .range(0, 500)
+        .sliderRange(0, 200)
+        .build());
+
+    private final Setting<Integer> mapOpacity = sgMap.add(new IntSetting.Builder()
+        .name("map-opacity")
+        .description("Opacity of the black map background.")
+        .defaultValue(220)
+        .range(0, 255)
+        .sliderRange(0, 255)
+        .build());
+
+    private final Setting<Boolean> mapGrid = sgMap.add(new BoolSetting.Builder()
+        .name("map-grid")
+        .description("Draw the chunk grid.")
+        .defaultValue(true)
+        .build());
+
+    private final Setting<Boolean> mapMarkers = sgMap.add(new BoolSetting.Builder()
+        .name("map-markers")
+        .description("Draw confirmed geode chunks as white squares.")
+        .defaultValue(true)
         .build());
 
     /** Bir chunk'ın tarama durumu. */
@@ -1192,11 +1256,115 @@ public class ClusterBypass extends Module {
         }
     }
 
+    /** Siyah-beyaz ustten harita: merkez oyuncu oku, beyaz kareler isaretli chunk'lar. */
+    private void renderMap(Render2DEvent event) {
+        int size = mapSize.get();
+        int left = Math.max(0, event.screenWidth - size - mapX.get());
+        int top = Math.max(0, Math.min(mapY.get(), event.screenHeight - size));
+
+        int bg = (mapOpacity.get() & 255) << 24;
+        event.drawContext.fill(left, top, left + size, top + size, bg);
+
+        // Beyaz cerceve.
+        event.drawContext.fill(left, top, left + size, top + 1, 0xFFFFFFFF);
+        event.drawContext.fill(left, top + size - 1, left + size, top + size, 0xFFFFFFFF);
+        event.drawContext.fill(left, top, left + 1, top + size, 0xFFFFFFFF);
+        event.drawContext.fill(left + size - 1, top, left + size, top + size, 0xFFFFFFFF);
+
+        int r = mapRange.get();
+        int cells = r * 2 + 1;
+        double cell = (double) size / cells;
+
+        int pcx = mc.player.blockPosition().getX() >> 4;
+        int pcz = mc.player.blockPosition().getZ() >> 4;
+
+        if (mapGrid.get()) {
+            for (int i = 1; i < cells; i++) {
+                int gx = (int) Math.round(left + i * cell);
+                int gy = (int) Math.round(top + i * cell);
+                event.drawContext.vLine(gx, top + 1, top + size - 1, 0x33FFFFFF);
+                event.drawContext.hLine(left + 1, left + size - 1, gy, 0x33FFFFFF);
+            }
+        }
+
+        if (mapMarkers.get()) {
+            for (int[] m : markerCache) {
+                int dx = m[0] - pcx;
+                int dz = m[1] - pcz;
+                if (Math.abs(dx) > r || Math.abs(dz) > r) continue;
+
+                int mx = (int) Math.round(left + (dx + r + 0.5) * cell);
+                int mz = (int) Math.round(top + (dz + r + 0.5) * cell);
+                int s = Math.max(2, (int) Math.round(cell * 0.55));
+
+                event.drawContext.fill(mx - s / 2, mz - s / 2, mx - s / 2 + s, mz - s / 2 + s, 0xFFFFFFFF);
+            }
+        }
+
+        // Oyuncu oku: yaw 0 = guney (+Z), haritada asagi bakar.
+        double cx = left + size * 0.5;
+        double cy = top + size * 0.5;
+        double yaw = Math.toRadians(mc.player.getYRot());
+        double fx = -Math.sin(yaw);
+        double fy = Math.cos(yaw);
+        double rx = fy;
+        double ry = -fx;
+
+        double tipX = cx + fx * 8.0;
+        double tipY = cy + fy * 8.0;
+        double baseX = cx - fx * 5.0;
+        double baseY = cy - fy * 5.0;
+        double leftX = baseX - rx * 5.0;
+        double leftY = baseY - ry * 5.0;
+        double rightX = baseX + rx * 5.0;
+        double rightY = baseY + ry * 5.0;
+
+        fillTriangle(event.drawContext, tipX, tipY, leftX, leftY, rightX, rightY, 0xFFFFFFFF);
+    }
+
+    /** GuiGraphics.fill ile 2B ucgen doldurur (ok icin). */
+    private static void fillTriangle(GuiGraphics ctx, double x1, double y1, double x2, double y2,
+                                     double x3, double y3, int color) {
+        int minY = (int) Math.floor(Math.min(y1, Math.min(y2, y3)));
+        int maxY = (int) Math.ceil(Math.max(y1, Math.max(y2, y3)));
+        double[] span = new double[2];
+
+        for (int y = minY; y <= maxY; y++) {
+            span[0] = Double.MAX_VALUE;
+            span[1] = -Double.MAX_VALUE;
+
+            scanEdge(x1, y1, x2, y2, y, span);
+            scanEdge(x2, y2, x3, y3, y, span);
+            scanEdge(x3, y3, x1, y1, y, span);
+
+            if (span[0] > span[1]) continue;
+            ctx.fill((int) Math.floor(span[0]), y, (int) Math.ceil(span[1]), y + 1, color);
+        }
+    }
+
+    private static void scanEdge(double x1, double y1, double x2, double y2, int y, double[] span) {
+        if ((y1 <= y && y <= y2) || (y2 <= y && y <= y1)) {
+            if (y1 == y2) {
+                span[0] = Math.min(span[0], Math.min(x1, x2));
+                span[1] = Math.max(span[1], Math.max(x1, x2));
+            } else {
+                double t = (y - y1) / (y2 - y1);
+                double x = x1 + t * (x2 - x1);
+                span[0] = Math.min(span[0], x);
+                span[1] = Math.max(span[1], x);
+            }
+        }
+    }
+
     @EventHandler
     private void onRender2D(Render2DEvent event) {
-        if (!hud.get() || mc.level == null || mc.player == null) return;
+        if (mc.level == null || mc.player == null) return;
 
         refreshCache();
+
+        if (map.get()) renderMap(event);
+
+        if (!hud.get()) return;
 
         double x = hudX.get();
         double y = hudY.get();
@@ -1212,7 +1380,7 @@ public class ClusterBypass extends Module {
         TextRenderer renderer = TextRenderer.get();
         renderer.begin(1.0);
 
-        renderer.render(String.format("ClusterBypass v9 | Geodes: %d | Large buds: %d | sweep %d%% | %.1fms",
+        renderer.render(String.format("ClusterBypass v10 | Geodes: %d | Large buds: %d | sweep %d%% | %.1fms",
             markerCache.size(), totalBuds, pct, emaScanMs), x, y, color);
 
         double cy = y + lineHeight;
