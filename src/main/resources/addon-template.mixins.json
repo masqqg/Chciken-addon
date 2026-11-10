@@ -3,7 +3,14 @@
   "package": "com.example.addon.mixin",
   "compatibilityLevel": "JAVA_21",
   "client": [
-    "ExampleMixin"
+    "ExampleMixin",
+    "KarambitMixin",
+    "ChickenFullbrightMixin",
+    "ChickenCameraAccessor",
+    "ChickenCameraMixin",
+    "ChickenEntityTurnMixin",
+    "ChickenClientInputMixin",
+    "ChickenGameRendererMixin"
   ],
   "injectors": {
     "defaultRequire": 1

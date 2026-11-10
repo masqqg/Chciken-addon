@@ -10,9 +10,11 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
+import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
+import meteordevelopment.meteorclient.renderer.text.TextRenderer;
 import meteordevelopment.meteorclient.settings.BoolSetting;
 import meteordevelopment.meteorclient.settings.ColorSetting;
 import meteordevelopment.meteorclient.settings.IntSetting;
@@ -37,6 +39,7 @@ import net.minecraft.network.protocol.game.ClientboundSectionBlocksUpdatePacket;
 import net.minecraft.network.protocol.game.ClientboundSoundPacket;
 import net.minecraft.resources.Identifier;
 import net.minecraft.tags.BlockTags;
+import net.minecraft.world.Container;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.animal.equine.AbstractChestedHorse;
@@ -312,6 +315,26 @@ public class ChickenStorageESP extends Module {
         .name("debug-channels")
         .description("Print how many hits every detection channel has so far, every 5 seconds. Shows which channel your server leaves open.")
         .defaultValue(false)
+        .build());
+
+    private final Setting<Boolean> blockEntityDebug = sgDebug.add(new BoolSetting.Builder()
+        .name("block-entity-debug")
+        .description("Show the type, position, container size and item count of nearby found block entities.")
+        .defaultValue(false)
+        .build());
+
+    private final Setting<Boolean> chunkData = sgDebug.add(new BoolSetting.Builder()
+        .name("chunk-data")
+        .description("Show the current chunk coordinates, section count and block entity count.")
+        .defaultValue(false)
+        .build());
+
+    private final Setting<Integer> debugLines = sgDebug.add(new IntSetting.Builder()
+        .name("debug-lines")
+        .description("Maximum number of block entity debug lines.")
+        .defaultValue(8)
+        .range(1, 24)
+        .sliderRange(1, 16)
         .build());
 
     private final Map<Long, List<Entry>> cache = new HashMap<>();
@@ -850,6 +873,94 @@ public class ChickenStorageESP extends Module {
     }
 
     // ------------------------------------------------------------------ render
+
+    @EventHandler
+    private void onRender2D(Render2DEvent event) {
+        if (mc.level == null || mc.player == null) return;
+        if (!blockEntityDebug.get() && !chunkData.get()) return;
+
+        List<String> lines = new ArrayList<>();
+        BlockPos feet = mc.player.blockPosition();
+
+        if (chunkData.get()) {
+            int cx = feet.getX() >> 4;
+            int cz = feet.getZ() >> 4;
+            LevelChunk chunk = mc.level.hasChunk(cx, cz) ? mc.level.getChunk(cx, cz) : null;
+            int sections = chunk == null ? 0 : chunk.getSectionsCount();
+            int blockEntities = chunk == null ? 0 : chunk.getBlockEntities().size();
+
+            lines.add("Chunk " + cx + ", " + cz + " | sections " + sections
+                + " | block entities " + blockEntities + " | Y " + feet.getY());
+        }
+
+        if (blockEntityDebug.get()) {
+            int r = viewRange();
+            int pcx = feet.getX() >> 4;
+            int pcz = feet.getZ() >> 4;
+            List<Entry> nearby = new ArrayList<>();
+
+            for (Map.Entry<Long, List<Entry>> e : cache.entrySet()) {
+                if (Math.abs(keyX(e.getKey()) - pcx) > r || Math.abs(keyZ(e.getKey()) - pcz) > r) continue;
+                nearby.addAll(e.getValue());
+            }
+
+            nearby.sort(Comparator.comparingDouble(entry -> distSq(entry.pos())));
+
+            if (nearby.isEmpty()) {
+                lines.add("BE debug: no containers found");
+            } else {
+                int limit = Math.min(debugLines.get(), nearby.size());
+                for (int i = 0; i < limit; i++) {
+                    Entry entry = nearby.get(i);
+                    BlockEntity be = mc.level.getBlockEntity(entry.pos());
+                    String type = be == null ? "hidden" : be.getType().toString();
+                    String extra = "";
+
+                    if (be instanceof Container container) {
+                        int items = 0;
+                        for (int slot = 0; slot < container.getContainerSize(); slot++) {
+                            if (!container.getItem(slot).isEmpty()) items++;
+                        }
+                        extra = " slots=" + container.getContainerSize() + " items=" + items;
+                    }
+
+                    BlockPos pos = entry.pos();
+                    lines.add("BE " + type + " @ " + pos.getX() + " " + pos.getY() + " " + pos.getZ()
+                        + (entry.hidden() ? " hidden" : "") + extra);
+                }
+            }
+        }
+
+        if (lines.isEmpty()) return;
+
+        TextRenderer text = TextRenderer.get();
+        text.begin(1.0);
+
+        double lineHeight = text.getHeight(true) + 1.0;
+        double width = 0.0;
+        for (String line : lines) width = Math.max(width, text.getWidth(line, true));
+
+        int x = 4;
+        int y = Math.max(4, (int) (event.screenHeight - lines.size() * lineHeight - 8));
+        event.drawContext.fill(x - 3, y - 3, (int) (x + width + 6), (int) (y + lines.size() * lineHeight + 3), 0xB0000000);
+        event.drawContext.fill(x - 3, y - 3, (int) (x + width + 6), y - 2, 0xFFFFAA33);
+
+        Color color = new Color(235, 242, 255, 255);
+        double cy = y;
+        for (String line : lines) {
+            text.render(line, x, cy, color, true);
+            cy += lineHeight;
+        }
+
+        text.end();
+    }
+
+    private double distSq(BlockPos pos) {
+        double dx = pos.getX() + 0.5 - mc.player.getX();
+        double dy = pos.getY() + 0.5 - mc.player.getY();
+        double dz = pos.getZ() + 0.5 - mc.player.getZ();
+        return dx * dx + dy * dy + dz * dz;
+    }
 
     @EventHandler
     private void onRender3D(Render3DEvent event) {

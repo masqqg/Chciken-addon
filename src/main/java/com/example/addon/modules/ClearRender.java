@@ -1,6 +1,8 @@
 package com.example.addon.modules;
 
 import com.example.addon.AddonTemplate;
+import meteordevelopment.meteorclient.events.entity.player.BreakBlockEvent;
+import meteordevelopment.meteorclient.events.world.BlockUpdateEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.BoolSetting;
 import meteordevelopment.meteorclient.settings.IntSetting;
@@ -29,8 +31,9 @@ import java.util.Set;
  * Sections without any air are skipped, and a time budget per tick keeps it fast
  * without freezing the game.
  *
- * The air pocket the player is standing in is never filled: that pocket is the
- * tunnel being dug, so filling it would turn freshly broken blocks into stone.
+ * Air the player has dug out is remembered and never filled. Without that, a
+ * tunnel turns back into stone as soon as the player walks out of its current
+ * pocket (and the same happens to a hole we block ourselves into).
  */
 public class ClearRender extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -64,6 +67,9 @@ public class ClearRender extends Module {
         .defaultValue(false).build());
 
     private final List<int[]> queue = new ArrayList<>();
+    /** Air positions opened by the player; pockets containing one are left alone. */
+    private final Set<Long> dugAir = new HashSet<>();
+    private Level lastLevel;
     private int cursor;
     private int sinceSweep;
     private int filledThisSweep;
@@ -76,6 +82,8 @@ public class ClearRender extends Module {
     @Override
     public void onActivate() {
         queue.clear();
+        dugAir.clear();
+        lastLevel = mc.level;
         cursor = 0;
         sinceSweep = Integer.MAX_VALUE / 2;
         filledThisSweep = 0;
@@ -84,12 +92,37 @@ public class ClearRender extends Module {
     @Override
     public void onDeactivate() {
         queue.clear();
+        dugAir.clear();
+        lastLevel = null;
         cursor = 0;
+    }
+
+    @EventHandler
+    private void onBreakBlock(BreakBlockEvent event) {
+        if (event.blockPos != null) protectDugAir(event.blockPos);
+    }
+
+    @EventHandler
+    private void onBlockUpdate(BlockUpdateEvent event) {
+        if (event.pos == null || event.oldState == null || event.newState == null) return;
+        if (!event.oldState.isAir() && event.newState.isAir()) protectDugAir(event.pos);
+    }
+
+    private void protectDugAir(BlockPos pos) {
+        if (dugAir.size() > 200_000) dugAir.clear();
+        dugAir.add(pos.asLong());
     }
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
         if (mc.level == null || mc.player == null) return;
+
+        if (mc.level != lastLevel) {
+            lastLevel = mc.level;
+            dugAir.clear();
+            queue.clear();
+            cursor = 0;
+        }
 
         sinceSweep++;
 
@@ -170,9 +203,10 @@ public class ClearRender extends Module {
                         List<BlockPos> pocket = floodFill(pos.immutable(), max, visited);
                         if (pocket == null) continue;
 
-                        // Oyuncunun içinde durduğu cep kendi kazdığımız tüneldir.
-                        // Burayı doldurursak kırdığımız bloklar taş görünür.
-                        if (pocket.contains(playerFeet) || pocket.contains(playerHead)) continue;
+                        // Oyuncunun içinde durduğu cep ve kazdığımız herhangi bir
+                        // blokla bağlantılı cep kendi tünelimizdir; doldurma.
+                        if (pocket.contains(playerFeet) || pocket.contains(playerHead)
+                            || pocket.stream().anyMatch(dug -> dugAir.contains(dug.asLong()))) continue;
 
                         for (BlockPos p : pocket) {
                             if (queued.add(p.asLong())) toFill.add(p);

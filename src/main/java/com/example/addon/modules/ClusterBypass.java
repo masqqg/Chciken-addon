@@ -23,7 +23,6 @@ import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
-import meteordevelopment.meteorclient.renderer.text.TextRenderer;
 import meteordevelopment.meteorclient.settings.BoolSetting;
 import meteordevelopment.meteorclient.settings.ColorSetting;
 import meteordevelopment.meteorclient.settings.IntSetting;
@@ -51,7 +50,6 @@ import net.minecraft.world.phys.AABB;
  *  - Işık, section DataLayer'larından okunur (getBrightness yerine) -> belirgin hız artışı
  *  - Otomatik marker Y: işaret chunk'ın en üstteki bloğuna çizilir
  *  - Sohbete "geode bulundu" bildirimi (chunk başına 1 kez, koordinat + mesafe + yön)
- *  - HUD: geode sayısı, sweep yüzdesi, en yakın geode mesafesi/yönü, tarama süresi
  *  - Tracer: en yakın geode'ye çizgi
  *  - Ziyaret edilen geodeları gizleme
  *  - Overworld filtresi ve ayar değişince kuyruğu otomatik yenileme
@@ -62,7 +60,7 @@ import net.minecraft.world.phys.AABB;
  *  - Artık sadece büyük amethyst bud'lar taranır (ışık seviyesi 4); küçük/orta bud ve cluster yok sayılır
  *  - Işık budun kendisinde değil çevresindeki Air bloklarında olduğunda, budun merkezi 6 yönlü
  *    ışık deseninden (açık Air yüzleri / kapalı duvar yüzleri) çözülür ve ESP merkeze çizilir
- *  - HUD ve sohbet bildirimi sadece büyük bud sayısını gösterir
+ *  - Sohbet bildirimi sadece büyük bud sayısını gösterir
  *
  * v8 yenilikleri:
  *  - Bulunan geodelar diske kaydedilir (meteor-client/cluster-bypass-geodes.json) ve
@@ -261,42 +259,6 @@ public class ClusterBypass extends Module {
         .name("sprite-marker")
         .description("Draw the amethyst cluster pixel art on the chunk floor.")
         .defaultValue(true)
-        .build());
-
-    private final Setting<Boolean> hud = sgRender.add(new BoolSetting.Builder()
-        .name("hud-overlay")
-        .description("Shows real-time status and found geode count on screen.")
-        .defaultValue(true)
-        .build());
-
-    private final Setting<Integer> hudX = sgRender.add(new IntSetting.Builder()
-        .name("hud-x")
-        .description("HUD horizontal offset.")
-        .defaultValue(10)
-        .range(0, 3000)
-        .sliderRange(0, 800)
-        .build());
-
-    private final Setting<Integer> hudY = sgRender.add(new IntSetting.Builder()
-        .name("hud-y")
-        .description("HUD vertical offset.")
-        .defaultValue(10)
-        .range(0, 2000)
-        .sliderRange(0, 800)
-        .build());
-
-    private final Setting<SettingColor> hudColor = sgRender.add(new ColorSetting.Builder()
-        .name("hud-color")
-        .description("HUD text color.")
-        .defaultValue(new SettingColor(255, 255, 255, 255))
-        .build());
-
-    private final Setting<Integer> hudGeodeList = sgRender.add(new IntSetting.Builder()
-        .name("hud-geode-list")
-        .description("How many found geodes to list with their bud counts.")
-        .defaultValue(2)
-        .range(0, 5)
-        .sliderRange(0, 5)
         .build());
 
     private final Setting<SettingColor> sideColor = sgRender.add(new ColorSetting.Builder()
@@ -1104,23 +1066,6 @@ public class ClusterBypass extends Module {
         for (long k : area) growthCache[i++] = k;
     }
 
-    private List<int[]> nearestMarkers(int n) {
-        List<int[]> list = new ArrayList<>(markerCache);
-        list.sort(Comparator.comparingDouble(this::distSqToPlayer));
-        return list.size() > n ? list.subList(0, n) : list;
-    }
-
-    private double distSqToPlayer(int[] m) {
-        double dx = m[0] * 16.0 + 8.0 - mc.player.getX();
-        double dz = m[1] * 16.0 + 8.0 - mc.player.getZ();
-        return dx * dx + dz * dz;
-    }
-
-    /** Büyük bud sayısını metne çevirir. */
-    private static String budsText(int[] m) {
-        return String.format("%d large buds", m[3]);
-    }
-
     private int[] nearestMarker() {
         int[] best = null;
         double bestDist = Double.MAX_VALUE;
@@ -1363,55 +1308,5 @@ public class ClusterBypass extends Module {
         refreshCache();
 
         if (map.get()) renderMap(event);
-
-        if (!hud.get()) return;
-
-        double x = hudX.get();
-        double y = hudY.get();
-        Color color = hudColor.get();
-        double lineHeight = 10.0;
-
-        int totalBuds = 0;
-        for (int[] m : markerCache) totalBuds += m[3];
-
-        int pct = queue.isEmpty() ? 100 : cursor * 100 / queue.size();
-        int listSize = Math.min(hudGeodeList.get(), markerCache.size());
-
-        TextRenderer renderer = TextRenderer.get();
-        renderer.begin(1.0);
-
-        renderer.render(String.format("ClusterBypass v10 | Geodes: %d | Large buds: %d | sweep %d%% | %.1fms",
-            markerCache.size(), totalBuds, pct, emaScanMs), x, y, color);
-
-        double cy = y + lineHeight;
-
-        if (listSize > 0) {
-            List<int[]> near = nearestMarkers(listSize);
-
-            for (int i = 0; i < near.size(); i++) {
-                int[] m = near.get(i);
-                double dx = m[0] * 16.0 + 8.0 - mc.player.getX();
-                double dz = m[1] * 16.0 + 8.0 - mc.player.getZ();
-                int dist = (int) Math.round(Math.sqrt(dx * dx + dz * dz));
-
-                renderer.render(String.format("#%d %dm %s | %s", i + 1, dist, compass(dx, dz), budsText(m)),
-                    x, cy, color);
-                cy += lineHeight;
-            }
-        } else {
-            int[] nearest = nearestMarker();
-            String near = "nearest: -";
-
-            if (nearest != null) {
-                double dx = nearest[0] * 16.0 + 8.0 - mc.player.getX();
-                double dz = nearest[1] * 16.0 + 8.0 - mc.player.getZ();
-                near = String.format("nearest: %dm %s | %s",
-                    (int) Math.round(Math.sqrt(dx * dx + dz * dz)), compass(dx, dz), budsText(nearest));
-            }
-
-            renderer.render(near, x, cy, color);
-        }
-
-        renderer.end();
     }
 }
