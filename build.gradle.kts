@@ -13,6 +13,19 @@ base {
 
 repositories {
     mavenCentral()
+
+    // GeckoLib - animation/render library used for the 3D Blockbench models
+    exclusiveContent {
+        forRepository {
+            maven {
+                name = "GeckoLib"
+                url = uri("https://dl.cloudsmith.io/public/geckolib3/geckolib/maven/")
+            }
+        }
+        filter {
+            includeGroup("software.bernie.geckolib")
+        }
+    }
 }
 
 dependencies {
@@ -20,6 +33,11 @@ dependencies {
     minecraft(libs.minecraft)
     mappings(loom.officialMojangMappings())
     modImplementation(libs.fabric.loader)
+    modImplementation(libs.fabric.api)
+
+    // GeckoLib: 3D Blockbench models and their animations
+    modImplementation(libs.geckolib.fabric)
+    include(libs.geckolib.fabric)
 
     // NanoVG (LWJGL 3.3.3, matching the version shipped with Minecraft)
     implementation("org.lwjgl:lwjgl-nanovg:3.3.3")

@@ -5,13 +5,17 @@ mod-version = "0.1.0"
 jdk = "21"
 minecraft = "1.21.11"
 fabric-loader = "0.19.5"
+fabric-api = "0.141.3+1.21.11"
+geckolib = "5.4.5"
 
 # Loom
-loom = "1.14.10"
+loom = "1.15.4"
 
 [libraries]
 minecraft = { module = "com.mojang:minecraft", version.ref = "minecraft" }
 fabric-loader = { module = "net.fabricmc:fabric-loader", version.ref = "fabric-loader" }
+fabric-api = { module = "net.fabricmc.fabric-api:fabric-api", version.ref = "fabric-api" }
+geckolib-fabric = { module = "software.bernie.geckolib:geckolib-fabric-1.21.11", version.ref = "geckolib" }
 
 [plugins]
 fabric-loom = { id = "fabric-loom", version.ref = "loom" }
