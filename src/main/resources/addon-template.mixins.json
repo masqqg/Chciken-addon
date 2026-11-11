@@ -11,7 +11,8 @@
     "ChickenEntityTurnMixin",
     "ChickenClientInputMixin",
     "ChickenGameRendererMixin",
-    "ChickenHudMixin"
+    "ChickenHudMixin",
+    "TitleScreenMixin"
   ],
   "injectors": {
     "defaultRequire": 1
