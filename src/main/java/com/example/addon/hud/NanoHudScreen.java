@@ -18,12 +18,12 @@ import java.util.Locale;
  */
 public final class NanoHudScreen extends Screen {
     private static final int PANEL_WIDTH = 560;
-    private static final int PANEL_HEIGHT = 306;
+    private static final int PANEL_HEIGHT = 352;
 
     private static final int PREVIEW_X = 356;
     private static final int PREVIEW_Y = 50;
     private static final int PREVIEW_WIDTH = 186;
-    private static final int PREVIEW_HEIGHT = 236;
+    private static final int PREVIEW_HEIGHT = 286;
 
     private static final int YELLOW = 0xFFFFC400;
     private static final int YELLOW_SOFT = 0xFFFFE082;
@@ -67,14 +67,16 @@ public final class NanoHudScreen extends Screen {
 
         slider(context, "Scale", hud.scale, 0.6, 2.5, x + 18, rowY + 108, 1, mouseX, mouseY, true);
         slider(context, "Background", hud.backgroundAlpha / 255.0, 0.2, 1.0, x + 18, rowY + 138, 2, mouseX, mouseY, false);
+        slider(context, "Wing speed", hud.wingSpeed, 0.2, 3.0, x + 18, rowY + 168, 3, mouseX, mouseY, true);
+        slider(context, "Wing amplitude", hud.wingAmplitude, 0.2, 2.0, x + 18, rowY + 198, 4, mouseX, mouseY, true);
 
-        context.drawString(font, "BRAND COLOR", x + 18, rowY + 168, MUTED, false);
+        context.drawString(font, "BRAND COLOR", x + 18, rowY + 228, MUTED, false);
         boolean yellowSelected = (hud.primary & 0xFFFFFF) == 0xFFC400;
         boolean honeySelected = (hud.primary & 0xFFFFFF) == 0xFFB300;
-        preset(context, "YELLOW", x + 18, rowY + 180, mouseX, mouseY, yellowSelected);
-        preset(context, "HONEY", x + 88, rowY + 180, mouseX, mouseY, honeySelected);
+        preset(context, "YELLOW", x + 18, rowY + 240, mouseX, mouseY, yellowSelected);
+        preset(context, "HONEY", x + 88, rowY + 240, mouseX, mouseY, honeySelected);
 
-        button(context, "RESET POSITION", x + 228, rowY + 180, 126, 20, mouseX, mouseY);
+        button(context, "RESET POSITION", x + 228, rowY + 240, 126, 20, mouseX, mouseY);
         button(context, "DONE", x + 286, y + PANEL_HEIGHT - 36, 56, 20, mouseX, mouseY);
 
         context.drawString(font, "F7 hides the HUD.  RSHIFT + drag moves it.  [ ] scales it.",
@@ -218,13 +220,19 @@ public final class NanoHudScreen extends Screen {
 
     private void drawPreviewWings(GuiGraphics context, int x, int y,
                                   int primary, int secondary, double time, boolean animated) {
+        NanoHudConfig hud = NanoHudConfig.get();
+        double speed = Math.max(0.15, hud.wingSpeed);
+        double amplitude = Math.max(0.1, hud.wingAmplitude);
+
         context.fill(x - 5, y + 4, x + 23, y + 19, color(primary, animated ? 22 : 16));
 
         for (int side = -1; side <= 1; side += 2) {
             int rootX = side < 0 ? x + 2 : x + 16;
             for (int i = 0; i < 3; i++) {
                 int tipX = rootX + side * (7 + i * 4);
-                int flap = animated ? (int) Math.round(Math.sin(time * 7.5 + i * 0.7) * 2.0) : 0;
+                int flap = animated
+                    ? (int) Math.round(Math.sin(time * 7.5 * speed + i * 0.7) * 2.0 * amplitude)
+                    : 0;
                 int tipY = y + 6 + i * 4 + flap;
                 int left = Math.min(rootX, tipX);
                 int right = Math.max(rootX, tipX);
@@ -354,17 +362,27 @@ public final class NanoHudScreen extends Screen {
             updateAlpha(hud, mouseX, x + 110, 184);
             return true;
         }
+        if (inside(mouseX, mouseY, x + 110, rowY + 176, 184, 18)) {
+            slider = 3;
+            updateWingSpeed(hud, mouseX, x + 110, 184);
+            return true;
+        }
+        if (inside(mouseX, mouseY, x + 110, rowY + 206, 184, 18)) {
+            slider = 4;
+            updateWingAmplitude(hud, mouseX, x + 110, 184);
+            return true;
+        }
 
-        if (inside(mouseX, mouseY, x + 18, rowY + 180, 64, 20)) {
+        if (inside(mouseX, mouseY, x + 18, rowY + 240, 64, 20)) {
             setPreset(hud, 0xFFFFC400, 0xFFFF8A00, 0xFFFFE082);
             return true;
         }
-        if (inside(mouseX, mouseY, x + 88, rowY + 180, 64, 20)) {
+        if (inside(mouseX, mouseY, x + 88, rowY + 240, 64, 20)) {
             setPreset(hud, 0xFFFFB300, 0xFFFF7A00, 0xFFFFE0A0);
             return true;
         }
 
-        if (inside(mouseX, mouseY, x + 228, rowY + 180, 126, 20)) {
+        if (inside(mouseX, mouseY, x + 228, rowY + 240, 126, 20)) {
             hud.x = 10;
             hud.y = 10;
             markDirty(hud);
@@ -381,11 +399,13 @@ public final class NanoHudScreen extends Screen {
 
     @Override
     public boolean mouseDragged(MouseButtonEvent event, double dragX, double dragY) {
-        if (slider == 1 || slider == 2) {
+        if (slider == 1 || slider == 2 || slider == 3 || slider == 4) {
             NanoHudConfig hud = NanoHudConfig.get();
             int x = (width - PANEL_WIDTH) / 2;
             if (slider == 1) updateScale(hud, event.x(), x + 110, 184);
-            else updateAlpha(hud, event.x(), x + 110, 184);
+            else if (slider == 2) updateAlpha(hud, event.x(), x + 110, 184);
+            else if (slider == 3) updateWingSpeed(hud, event.x(), x + 110, 184);
+            else updateWingAmplitude(hud, event.x(), x + 110, 184);
             return true;
         }
         return super.mouseDragged(event, dragX, dragY);
@@ -410,6 +430,18 @@ public final class NanoHudScreen extends Screen {
     private void updateAlpha(NanoHudConfig hud, double mouseX, int trackX, int trackWidth) {
         double t = Math.max(0.0, Math.min(1.0, (mouseX - trackX) / trackWidth));
         hud.backgroundAlpha = (int) Math.round((0.2 + t * 0.8) * 255.0);
+        markDirty(hud);
+    }
+
+    private void updateWingSpeed(NanoHudConfig hud, double mouseX, int trackX, int trackWidth) {
+        double t = Math.max(0.0, Math.min(1.0, (mouseX - trackX) / trackWidth));
+        hud.wingSpeed = 0.2 + t * 2.8;
+        markDirty(hud);
+    }
+
+    private void updateWingAmplitude(NanoHudConfig hud, double mouseX, int trackX, int trackWidth) {
+        double t = Math.max(0.0, Math.min(1.0, (mouseX - trackX) / trackWidth));
+        hud.wingAmplitude = 0.2 + t * 1.8;
         markDirty(hud);
     }
 

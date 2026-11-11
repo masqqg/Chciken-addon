@@ -376,7 +376,12 @@ public final class NanoHudRenderer {
 
     private static void drawPlayerWings(double time, boolean animations, int primary, int secondary) {
         float top = 58.0f;
-        float flap = animations ? (float) Math.sin(time * 6.5) * 2.4f : 0.0f;
+        NanoHudConfig hud = NanoHudConfig.get();
+        double speed = Math.max(0.15, hud.wingSpeed);
+        double amplitude = Math.max(0.1, hud.wingAmplitude);
+        float flap = animations
+            ? (float) Math.sin(time * 6.5 * speed) * 2.4f * (float) amplitude
+            : 0.0f;
 
         for (int side = -1; side <= 1; side += 2) {
             for (int i = 0; i < 3; i++) {

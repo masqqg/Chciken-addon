@@ -39,6 +39,9 @@ public final class NanoHudConfig {
     public boolean showStats = true;
     public boolean animations = true;
 
+    public double wingSpeed = 1.0;
+    public double wingAmplitude = 1.0;
+
     // Chicken Client's main brand color is yellow.
     public int primary = 0xFFC400;
     public int secondary = 0xFF8A00;
@@ -131,6 +134,8 @@ public final class NanoHudConfig {
         showWatermark = bool(properties, "show-watermark", showWatermark);
         showStats = bool(properties, "show-stats", showStats);
         animations = bool(properties, "animations", animations);
+        wingSpeed = decimal(properties, "wing-speed", wingSpeed);
+        wingAmplitude = decimal(properties, "wing-amplitude", wingAmplitude);
         primary = color(properties, "primary", primary);
         secondary = color(properties, "secondary", secondary);
         accent = color(properties, "accent", accent);
@@ -159,6 +164,8 @@ public final class NanoHudConfig {
         properties.setProperty("show-watermark", Boolean.toString(showWatermark));
         properties.setProperty("show-stats", Boolean.toString(showStats));
         properties.setProperty("animations", Boolean.toString(animations));
+        properties.setProperty("wing-speed", Double.toString(wingSpeed));
+        properties.setProperty("wing-amplitude", Double.toString(wingAmplitude));
         properties.setProperty("primary", Integer.toHexString(primary));
         properties.setProperty("secondary", Integer.toHexString(secondary));
         properties.setProperty("accent", Integer.toHexString(accent));
