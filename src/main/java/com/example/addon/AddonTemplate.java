@@ -13,6 +13,7 @@ import com.example.addon.modules.ClusterBypass;
 import com.example.addon.modules.CosmicSky;
 import com.example.addon.modules.Karambit;
 import com.example.addon.modules.PlayerFinder;
+import com.example.addon.modules.PlayerHat;
 import com.example.addon.modules.RedWings;
 import com.example.addon.modules.SpawnerFlag;
 import com.example.addon.modules.SusChunkFinder;
@@ -47,6 +48,7 @@ public class AddonTemplate extends MeteorAddon {
         Modules.get().add(new CosmicSky());
         Modules.get().add(new Karambit());
         Modules.get().add(new PlayerFinder());
+        Modules.get().add(new PlayerHat());
         Modules.get().add(new RedWings());
         Modules.get().add(new SpawnerFlag());
         Modules.get().add(new SusChunkFinder());
