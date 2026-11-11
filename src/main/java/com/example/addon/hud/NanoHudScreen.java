@@ -59,7 +59,7 @@ public final class NanoHudScreen extends Screen {
         context.drawString(font, "HUD SETTINGS  //  STANDALONE NANO HUD", x + 18, y + 28, MUTED, false);
         button(context, "MODE: " + (hud.hudMode == NanoHudConfig.HudMode.LEFT_HAND ? "LEFT HAND" : "NORMAL"),
             x + PANEL_WIDTH - 190, y + 12, 150, 18, mouseX, mouseY);
-        context.drawString(font, "F8", x + PANEL_WIDTH - 28, y + 16, YELLOW_SOFT, false);
+        context.drawString(font, "P", x + PANEL_WIDTH - 28, y + 16, YELLOW_SOFT, false);
 
         int rowY = y + 52;
         toggle(context, "Watermark", hud.showWatermark, x + 18, rowY, mouseX, mouseY);
@@ -81,7 +81,7 @@ public final class NanoHudScreen extends Screen {
         button(context, "RESET POSITION", x + 228, rowY + 240, 126, 20, mouseX, mouseY);
         button(context, "DONE", x + 286, y + PANEL_HEIGHT - 36, 56, 20, mouseX, mouseY);
 
-        context.drawString(font, "F7 hides the HUD.  RSHIFT + drag moves it.  [ ] scales it.",
+        context.drawString(font, "P opens this menu.  F7 hides the HUD.  RSHIFT + drag moves it.  [ ] scales it.",
             x + 18, y + PANEL_HEIGHT - 15, 0xFF7F8A96, false);
 
         drawPreview(context, hud, x + PREVIEW_X, y + PREVIEW_Y, PREVIEW_WIDTH, PREVIEW_HEIGHT);

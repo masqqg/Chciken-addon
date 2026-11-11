@@ -36,7 +36,7 @@ public final class NanoHudConfig {
     public double scale = 1.0;
     public int editorKey = GLFW.GLFW_KEY_RIGHT_SHIFT;
     public int toggleKey = GLFW.GLFW_KEY_F7;
-    public int settingsKey = GLFW.GLFW_KEY_F8;
+    public int settingsKey = GLFW.GLFW_KEY_P;
     public int backgroundAlpha = 205;
 
     public boolean showPlayer = true;
@@ -136,6 +136,12 @@ public final class NanoHudConfig {
         editorKey = integer(properties, "editor-key", editorKey);
         toggleKey = integer(properties, "toggle-key", toggleKey);
         settingsKey = integer(properties, "settings-key", settingsKey);
+
+        // The settings menu moved from F8 to P; migrate existing configs once.
+        if (settingsKey == GLFW.GLFW_KEY_F8) {
+            settingsKey = GLFW.GLFW_KEY_P;
+            save();
+        }
         backgroundAlpha = integer(properties, "background-alpha", backgroundAlpha);
         showPlayer = bool(properties, "show-player", showPlayer);
         showWatermark = bool(properties, "show-watermark", showWatermark);
