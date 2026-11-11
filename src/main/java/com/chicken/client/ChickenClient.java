@@ -4,22 +4,19 @@ import com.chicken.client.config.ConfigManager;
 import com.chicken.client.core.Module;
 import com.chicken.client.core.ModuleManager;
 import com.chicken.client.gui.ClickGuiScreen;
+import com.chicken.client.modules.BlockESP;
 import com.chicken.client.modules.FreeLook;
 import com.chicken.client.modules.Freecam;
 import com.chicken.client.modules.Fullbright;
+import com.mojang.blaze3d.vertex.PoseStack;
 import net.fabricmc.api.ClientModInitializer;
 import net.minecraft.client.Minecraft;
+import net.minecraft.world.phys.Vec3;
 import org.lwjgl.glfw.GLFW;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/**
- * Chicken Client entrypoint.
- *
- * <p>Nothing here touches Meteor, Orbit or any other client framework: the
- * module registry, settings, config store and GUI all live in this package.
- * The only Minecraft hooks are the mod's own mixins.</p>
- */
+/** Standalone Chicken Client entrypoint: no Meteor, no Orbit, no other client. */
 public final class ChickenClient implements ClientModInitializer {
     public static final String NAME = "Chicken Client";
     public static final String VERSION = "0.1.0";
@@ -60,6 +57,7 @@ public final class ChickenClient implements ClientModInitializer {
         modules.register(new Fullbright());
         modules.register(new Freecam());
         modules.register(new FreeLook());
+        modules.register(new BlockESP());
 
         config.load();
 
@@ -89,6 +87,20 @@ public final class ChickenClient implements ClientModInitializer {
         }
 
         if (mc.player != null && mc.level != null) modules.tick();
+    }
+
+    /** Called from ChickenRenderMixin at the end of the level render pass. */
+    public void onRender3D() {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.level == null || mc.player == null || mc.gameRenderer == null) return;
+
+        PoseStack pose = new PoseStack();
+        Vec3 camera = mc.gameRenderer.getMainCamera().position();
+        pose.translate(-camera.x, -camera.y, -camera.z);
+
+        for (Module module : modules.all()) {
+            if (module.isEnabled()) module.onRender3D(pose);
+        }
     }
 
     private boolean justPressed(long window, int key) {

@@ -1,6 +1,7 @@
 package com.chicken.client.core;
 
 import com.chicken.client.settings.SettingGroup;
+import com.mojang.blaze3d.vertex.PoseStack;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -81,5 +82,8 @@ public class Module {
     }
 
     public void onTick() {
+    }
+
+    public void onRender3D(PoseStack pose) {
     }
 }
