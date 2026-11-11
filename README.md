@@ -10,8 +10,9 @@ Chicken Client is a Meteor Client addon for Minecraft 1.21.11.
 - **Free Look** - independent camera look with an optional through-walls mode.
 - **Block ESP** - configurable block scanner with boxes and tracers.
 - **Storage ESP** - container detection with block-entity debug and chunk data readouts.
-- **Nano HUD** - a standalone NanoVG HUD rendered by its own in-game mixin, not by Meteor's HUD or 2D renderer. It has an animated cloud watermark, player card, health/armor/XP bars, ping/FPS/speed/module counters and coordinates. Hold right-shift and drag with the left mouse button to place it.
+- **Nano HUD** - a fully standalone NanoVG HUD with its own config, mixin, GL frame, font and native libraries. It does not depend on Meteor's HUD, settings, modules or 2D renderer. It has an animated cloud watermark, player card, health/armor/XP bars, ping/FPS/speed counters, coordinates and an editor overlay. F7 toggles it; hold right-shift, drag with the left mouse button and use `[`/`]` to scale. Config: `config/chicken-client/nano-hud.properties`.
 - **Red Wings** - layered animated crimson wings for yourself and nearby players, with glow, feather ribs and ember trails.
+- **Cosmic Sky** - a cinematic 3D atmosphere with ringed planets, aurora ribbons, twinkling stars and shooting stars.
 - ClusterBypass, BaseFinder, PlayerFinder, SpawnerFlag, ClearRender and Storage ESP utilities.
 
 ## Build

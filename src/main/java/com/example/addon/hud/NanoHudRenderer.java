@@ -1,6 +1,5 @@
 package com.example.addon.hud;
 
-import com.example.addon.modules.ChickenHud;
 import com.mojang.blaze3d.opengl.DirectStateAccess;
 import com.mojang.blaze3d.opengl.GlDevice;
 import com.mojang.blaze3d.opengl.GlStateManager;
@@ -8,10 +7,9 @@ import com.mojang.blaze3d.opengl.GlTexture;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.textures.GpuTexture;
-import meteordevelopment.meteorclient.systems.modules.Modules;
-import meteordevelopment.meteorclient.utils.render.color.Color;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
+import org.lwjgl.glfw.GLFW;
 import org.lwjgl.nanovg.NVGColor;
 import org.lwjgl.nanovg.NVGPaint;
 import org.lwjgl.opengl.GL11C;
@@ -61,11 +59,11 @@ import static org.lwjgl.nanovg.NanoVGGL3.NVG_STENCIL_STROKES;
 import static org.lwjgl.nanovg.NanoVGGL3.nvgCreate;
 
 /**
- * A deliberately Meteor-renderer-free NanoVG HUD.
+ * Standalone NanoVG HUD renderer.
  *
- * <p>It owns its NanoVG context, font, GL frame setup and drawing. The only
- * integration point is the in-game HUD mixin, which calls {@link #render}.
- * No Meteor {@code Render2DEvent}, {@code HudElement} or HUD editor is used.</p>
+ * <p>It owns its context, bundled font, native GL frame and config. The only
+ * hook is the mod's own {@code Gui.render} mixin. It does not import or call
+ * Meteor's HUD, settings or 2D renderer.</p>
  */
 public final class NanoHudRenderer {
     private static final Logger LOG = LoggerFactory.getLogger("ChickenClient/NanoVG");
@@ -86,21 +84,29 @@ public final class NanoHudRenderer {
     private static boolean dragging;
     private static double dragOffsetX;
     private static double dragOffsetY;
+    private static boolean toggleHeld;
+    private static boolean scaleDownHeld;
+    private static boolean scaleUpHeld;
 
     private NanoHudRenderer() {
     }
 
-    public static void render(ChickenHud hud) {
+    public static void render() {
         Minecraft mc = Minecraft.getInstance();
+        NanoHudConfig hud = NanoHudConfig.get();
+
+        boolean toggle = keyDown(mc, hud.toggleKey);
+        if (toggle && !toggleHeld) hud.toggle();
+        toggleHeld = toggle;
+
+        if (!hud.enabled) return;
         if (mc.level == null || mc.player == null || mc.getWindow().isIconified()) return;
         if (mc.options.hideGui) return;
-
         if (!ensureContext()) return;
 
         RenderTarget target = mc.getMainRenderTarget();
         int guiWidth = mc.getWindow().getGuiScaledWidth();
         int guiHeight = mc.getWindow().getGuiScaledHeight();
-
         if (guiWidth <= 0 || guiHeight <= 0 || target.width <= 0 || target.height <= 0) return;
 
         int fbo = resolveFramebuffer(target);
@@ -108,13 +114,30 @@ public final class NanoHudRenderer {
 
         double mouseX = mc.mouseHandler.getScaledXPos(mc.getWindow());
         double mouseY = mc.mouseHandler.getScaledYPos(mc.getWindow());
-        boolean editor = hud.editorKey.get().isPressed();
+        boolean editor = keyDown(mc, hud.editorKey);
         boolean leftPressed = mc.mouseHandler.isLeftPressed();
 
-        // Release the grabbed cursor only while the editor key is held so the HUD
-        // can be placed with the mouse without opening a Minecraft screen.
-        if (editor && mc.screen == null && mc.mouseHandler.isMouseGrabbed()) mc.mouseHandler.releaseMouse();
-        if (!editor && mc.screen == null && !mc.mouseHandler.isMouseGrabbed()) mc.mouseHandler.grabMouse();
+        if (editor) {
+            if (mc.screen == null && mc.mouseHandler.isMouseGrabbed()) mc.mouseHandler.releaseMouse();
+
+            boolean down = keyDown(mc, GLFW.GLFW_KEY_LEFT_BRACKET);
+            boolean up = keyDown(mc, GLFW.GLFW_KEY_RIGHT_BRACKET);
+            if (down && !scaleDownHeld) {
+                hud.scale = Math.max(0.6, hud.scale - 0.1);
+                hud.save();
+            }
+            if (up && !scaleUpHeld) {
+                hud.scale = Math.min(2.5, hud.scale + 0.1);
+                hud.save();
+            }
+            scaleDownHeld = down;
+            scaleUpHeld = up;
+        }
+        else {
+            scaleDownHeld = false;
+            scaleUpHeld = false;
+            if (mc.screen == null && !mc.mouseHandler.isMouseGrabbed()) mc.mouseHandler.grabMouse();
+        }
 
         handleDragging(hud, editor, leftPressed, mouseX, mouseY);
 
@@ -135,14 +158,13 @@ public final class NanoHudRenderer {
 
         nvgEndFrame(vg);
 
-        // Keep the state sane for the rest of the GUI pass.
         GlStateManager._disableDepthTest();
         GlStateManager._disableCull();
         GlStateManager._enableBlend();
         GlStateManager._blendFuncSeparate(GL11C.GL_SRC_ALPHA, GL11C.GL_ONE_MINUS_SRC_ALPHA, GL11C.GL_ONE, GL11C.GL_ZERO);
     }
 
-    private static void handleDragging(ChickenHud hud, boolean editor, boolean leftPressed, double mouseX, double mouseY) {
+    private static void handleDragging(NanoHudConfig hud, boolean editor, boolean leftPressed, double mouseX, double mouseY) {
         if (!editor) {
             if (dragging) {
                 hud.endDrag();
@@ -151,7 +173,7 @@ public final class NanoHudRenderer {
             return;
         }
 
-        double scale = hud.scale.get();
+        double scale = hud.scale;
         double panelX = hud.panelX();
         double panelY = hud.panelY();
         double panelWidth = PANEL_WIDTH * scale;
@@ -167,9 +189,7 @@ public final class NanoHudRenderer {
                 hud.beginDrag(panelX, panelY);
             }
 
-            if (dragging) {
-                hud.dragTo(mouseX - dragOffsetX, mouseY - dragOffsetY);
-            }
+            if (dragging) hud.dragTo(mouseX - dragOffsetX, mouseY - dragOffsetY);
         }
         else if (dragging) {
             hud.endDrag();
@@ -177,10 +197,10 @@ public final class NanoHudRenderer {
         }
     }
 
-    private static void draw(ChickenHud hud, Minecraft mc, boolean editor) {
-        double time = (System.nanoTime() / 1_000_000_000.0);
+    private static void draw(NanoHudConfig hud, Minecraft mc, boolean editor) {
+        double time = System.nanoTime() / 1_000_000_000.0;
         double open = editor ? 1.0 : hud.openProgress();
-        double scale = hud.scale.get();
+        double scale = hud.scale;
 
         double panelX = hud.panelX() + (1.0 - open) * -26.0;
         double panelY = hud.panelY() + (1.0 - open) * -8.0;
@@ -190,28 +210,23 @@ public final class NanoHudRenderer {
         nvgTranslate(vg, (float) panelX, (float) panelY);
         nvgScale(vg, (float) scale, (float) scale);
         nvgGlobalAlpha(vg, alpha);
-
         drawPanel(hud, mc, time, editor);
-
         nvgRestore(vg);
     }
 
-    private static void drawPanel(ChickenHud hud, Minecraft mc, double time, boolean editor) {
-        Color primary = hud.primary.get();
-        Color secondary = hud.secondary.get();
-        Color accent = hud.accent.get();
+    private static void drawPanel(NanoHudConfig hud, Minecraft mc, double time, boolean editor) {
+        int primary = hud.primary;
+        int secondary = hud.secondary;
+        int accent = hud.accent;
+        int bgAlpha = hud.backgroundAlpha;
 
-        int bgAlpha = hud.backgroundAlpha.get();
-
-        // Layered shadow and glass body.
         fillRound(-8.0f, -8.0f, PANEL_WIDTH + 16.0f, PANEL_HEIGHT + 16.0f, 22.0f, argb(0, 0, 0, 80));
         fillRound(-3.0f, -3.0f, PANEL_WIDTH + 6.0f, PANEL_HEIGHT + 6.0f, 19.0f, argb(0, 0, 0, 105));
         fillRound(0.0f, 0.0f, PANEL_WIDTH, PANEL_HEIGHT, 16.0f, argb(8, 12, 18, bgAlpha));
         fillRound(1.0f, 1.0f, PANEL_WIDTH - 2.0f, PANEL_HEIGHT - 2.0f, 15.0f, argb(14, 20, 30, (int) (bgAlpha * 0.72)));
 
-        // Animated gradient border.
-        setColor(COLOR_A, primary.r, primary.g, primary.b, 230);
-        setColor(COLOR_B, secondary.r, secondary.g, secondary.b, 230);
+        setColor(COLOR_A, argb(primary, 230));
+        setColor(COLOR_B, argb(secondary, 230));
         nvgBeginPath(vg);
         nvgRoundedRect(vg, 0.8f, 0.8f, PANEL_WIDTH - 1.6f, PANEL_HEIGHT - 1.6f, 15.5f);
         nvgStrokeWidth(vg, 1.4f);
@@ -219,77 +234,59 @@ public final class NanoHudRenderer {
         nvgStrokePaint(vg, PAINT);
         nvgStroke(vg);
 
-        // Top glow line and a soft moving scanline.
         fillGradient(12.0f, 0.0f, PANEL_WIDTH - 24.0f, 1.6f, argb(primary, 220), argb(secondary, 20), true);
-        if (hud.animations.get()) {
+        if (hud.animations) {
             float scanY = 8.0f + (float) ((time * 34.0) % (PANEL_HEIGHT - 16.0));
             fillGradient(18.0f, scanY, PANEL_WIDTH - 36.0f, 1.0f, argb(primary, 0), argb(primary, 75), false);
         }
 
-        if (hud.showWatermark.get()) {
+        if (hud.showWatermark) {
             drawCloud(30.0f, 25.0f, 1.0f, time, hud, primary, secondary);
-            drawWordmark("CHICKEN CLIENT", 58.0f, 16.0f, 12.5f, time, primary, secondary, accent);
+            drawWordmark("CHICKEN CLIENT", 58.0f, 16.0f, 12.5f, time, primary, secondary);
             text("NANO HUD  //  CHICKEN CLIENT", 58.0f, 33.0f, 7.2f, argb(190, 202, 218, 190));
         }
 
-        // Header/body separator.
         fillGradient(16.0f, 48.0f, PANEL_WIDTH - 32.0f, 1.0f, argb(primary, 80), argb(secondary, 20), true);
 
         LocalPlayer player = mc.player;
-        if (hud.showPlayer.get() && player != null) {
-            drawPlayerCard(hud, mc, player, time, primary, secondary, accent);
-        }
+        if (hud.showPlayer && player != null) drawPlayerCard(mc, player, time, primary, secondary, accent);
+        if (hud.showStats && player != null) drawStats(mc, player, time, primary, secondary);
 
-        if (hud.showStats.get() && player != null) {
-            drawStats(mc, player, time, primary, secondary, accent);
-        }
-
-        // Footer marker.
         fillRound(16.0f, PANEL_HEIGHT - 15.0f, 3.0f, 3.0f, 1.5f, argb(secondary, 220));
-        text("CHICKEN CLIENT  •  INDEPENDENT HUD", 22.0f, PANEL_HEIGHT - 18.0f, 6.4f, argb(150, 170, 190, 145));
+        text("CHICKEN CLIENT  •  STANDALONE NANO HUD", 22.0f, PANEL_HEIGHT - 18.0f, 6.4f, argb(150, 170, 190, 145));
 
-        if (editor) {
-            drawEditorOverlay(hud, primary, secondary, time);
-        }
+        if (editor) drawEditorOverlay(primary, secondary);
     }
 
-    private static void drawPlayerCard(ChickenHud hud, Minecraft mc, LocalPlayer player, double time,
-                                       Color primary, Color secondary, Color accent) {
+    private static void drawPlayerCard(Minecraft mc, LocalPlayer player, double time,
+                                       int primary, int secondary, int accent) {
         float top = 58.0f;
 
-        // Avatar plate.
         fillRound(18.0f, top, 44.0f, 44.0f, 13.0f, argb(30, 42, 58, 220));
-        fillRoundGradient(19.0f, top + 1.0f, 42.0f, 42.0f, 12.0f,
-            argb(primary, 70), argb(secondary, 45), true);
+        fillRoundGradient(19.0f, top + 1.0f, 42.0f, 42.0f, 12.0f, argb(primary, 70), argb(secondary, 45), true);
 
         nvgBeginPath(vg);
         nvgCircle(vg, 40.0f, top + 18.0f, 7.8f);
         nvgRoundedRect(vg, 29.0f, top + 27.0f, 22.0f, 15.0f, 7.0f);
-        nvgFillColor(vg, color(COLOR_A, 235, 242, 255, 225));
+        setColor(COLOR_A, 235, 242, 255, 225);
+        nvgFillColor(vg, COLOR_A);
         nvgFill(vg);
 
-        String name = player.getName().getString();
-        text(name, 72.0f, top + 2.0f, 12.2f, argb(242, 248, 255, 255));
+        text(player.getName().getString(), 72.0f, top + 2.0f, 12.2f, argb(242, 248, 255, 255));
         text("LOCAL PLAYER", 72.0f, top + 17.0f, 7.0f, argb(140, 170, 195, 190));
 
         float health = Math.max(0.0f, player.getHealth());
         float maxHealth = Math.max(1.0f, player.getMaxHealth());
         float healthRatio = Math.min(1.0f, health / maxHealth);
         bar(72.0f, top + 29.0f, 142.0f, 6.0f, healthRatio, argb(255, 61, 90, 235), argb(26, 34, 52, 220), time);
-
-        float armorRatio = Math.min(1.0f, player.getArmorValue() / 20.0f);
-        bar(72.0f, top + 39.0f, 142.0f, 4.5f, armorRatio, argb(primary, 220), argb(20, 28, 40, 210), time);
-
+        bar(72.0f, top + 39.0f, 142.0f, 4.5f, Math.min(1.0f, player.getArmorValue() / 20.0f), argb(primary, 220), argb(20, 28, 40, 210), time);
         bar(72.0f, top + 47.0f, 142.0f, 3.5f, player.experienceProgress, argb(accent, 220), argb(20, 28, 40, 210), time);
 
-        text(String.format(Locale.ROOT, "%.1f / %.0f", health, maxHealth),
-            218.0f, top + 28.0f, 6.7f, argb(230, 240, 250, 205));
-        text(String.format(Locale.ROOT, "ARMOR %d", player.getArmorValue()),
-            218.0f, top + 39.0f, 6.3f, argb(primary, 205));
+        text(String.format(Locale.ROOT, "%.1f / %.0f", health, maxHealth), 218.0f, top + 28.0f, 6.7f, argb(230, 240, 250, 205));
+        text(String.format(Locale.ROOT, "ARMOR %d", player.getArmorValue()), 218.0f, top + 39.0f, 6.3f, argb(primary, 205));
     }
 
-    private static void drawStats(Minecraft mc, LocalPlayer player, double time,
-                                  Color primary, Color secondary, Color accent) {
+    private static void drawStats(Minecraft mc, LocalPlayer player, double time, int primary, int secondary) {
         float top = 124.0f;
         float left = 18.0f;
         float col = 62.0f;
@@ -303,22 +300,20 @@ public final class NanoHudRenderer {
         int fps = mc.getFps();
         double speed = Math.sqrt(player.getDeltaMovement().x * player.getDeltaMovement().x
             + player.getDeltaMovement().z * player.getDeltaMovement().z) * 20.0;
-        int modules = Modules.get().getActive().size();
+        int modules = 0;
 
         stat("PING", ping < 0 ? "--" : ping + "ms", left, top);
         stat("FPS", Integer.toString(fps), left + col, top);
         stat("SPEED", String.format(Locale.ROOT, "%.1f", speed), left + col * 2.0f, top);
-        stat("MODULES", Integer.toString(modules), left + col * 3.0f, top);
+        stat("STATUS", "LIVE", left + col * 3.0f, top);
 
         fillGradient(16.0f, top + 26.0f, PANEL_WIDTH - 32.0f, 1.0f, argb(primary, 50), argb(secondary, 15), true);
 
-        text(String.format(Locale.ROOT, "XYZ  %.0f  %.0f  %.0f",
-                player.getX(), player.getY(), player.getZ()),
+        text(String.format(Locale.ROOT, "XYZ  %.0f  %.0f  %.0f", player.getX(), player.getY(), player.getZ()),
             18.0f, top + 34.0f, 7.0f, argb(165, 185, 205, 190));
         text(String.format(Locale.ROOT, "DIM  %s", player.level().dimension().toString()),
             18.0f, top + 45.0f, 6.4f, argb(135, 160, 185, 165));
 
-        // Tiny animated wing motif in the bottom-right corner.
         float baseX = PANEL_WIDTH - 42.0f;
         float baseY = top + 38.0f;
         float flap = (float) Math.sin(time * 3.2) * 2.0f;
@@ -334,38 +329,35 @@ public final class NanoHudRenderer {
     }
 
     private static void drawCloud(float cx, float cy, float scale, double time,
-                                  ChickenHud hud, Color primary, Color secondary) {
-        float bob = hud.animations.get() ? (float) Math.sin(time * 2.1) * 1.3f : 0.0f;
-        float pulse = hud.animations.get() ? (float) (0.5 + 0.5 * Math.sin(time * 3.0)) : 0.5f;
+                                  NanoHudConfig hud, int primary, int secondary) {
+        float bob = hud.animations ? (float) Math.sin(time * 2.1) * 1.3f : 0.0f;
+        float pulse = hud.animations ? (float) (0.5 + 0.5 * Math.sin(time * 3.0)) : 0.5f;
 
         nvgSave(vg);
         nvgTranslate(vg, cx, cy + bob);
         nvgScale(vg, scale, scale);
 
-        // Soft glow.
         nvgBeginPath(vg);
         nvgCircle(vg, -8.0f, 2.0f, 11.0f + pulse);
         nvgCircle(vg, 8.0f, 2.0f, 12.0f + pulse);
         nvgRoundedRect(vg, -16.0f, 0.0f, 32.0f, 11.0f, 5.0f);
-        setColor(COLOR_A, primary.r, primary.g, primary.b, 18);
+        setColor(COLOR_A, argb(primary, 18));
         nvgFillColor(vg, COLOR_A);
         nvgFill(vg);
 
-        // Cloud body with a diagonal gradient.
         nvgBeginPath(vg);
         nvgCircle(vg, -8.0f, 1.0f, 8.5f);
         nvgCircle(vg, 7.0f, 0.0f, 10.0f);
         nvgCircle(vg, 16.0f, 4.0f, 6.0f);
         nvgRoundedRect(vg, -16.0f, 4.0f, 32.0f, 8.0f, 4.0f);
-        setColor(COLOR_A, primary.r, primary.g, primary.b, 245);
-        setColor(COLOR_B, secondary.r, secondary.g, secondary.b, 245);
+        setColor(COLOR_A, argb(primary, 245));
+        setColor(COLOR_B, argb(secondary, 245));
         nvgLinearGradient(vg, -16.0f, -8.0f, 16.0f, 12.0f, COLOR_A, COLOR_B, PAINT);
         nvgFillPaint(vg, PAINT);
         nvgFill(vg);
 
-        // Highlight and animated lightning.
         fillRound(-8.0f, -3.0f, 14.0f, 3.0f, 1.5f, argb(255, 255, 255, 55));
-        if (hud.animations.get() && Math.sin(time * 6.2) > 0.35) {
+        if (hud.animations && Math.sin(time * 6.2) > 0.35) {
             nvgBeginPath(vg);
             nvgMoveTo(vg, 2.0f, 13.0f);
             nvgLineTo(vg, -1.0f, 18.0f);
@@ -381,7 +373,7 @@ public final class NanoHudRenderer {
     }
 
     private static void drawWordmark(String word, float x, float y, float size, double time,
-                                     Color primary, Color secondary, Color accent) {
+                                     int primary, int secondary) {
         if (font == -1) return;
 
         float cursor = x;
@@ -395,13 +387,10 @@ public final class NanoHudRenderer {
         }
     }
 
-    private static void drawEditorOverlay(ChickenHud hud, Color primary, Color secondary, double time) {
-        setColor(COLOR_A, primary.r, primary.g, primary.b, 230);
-        setColor(COLOR_B, secondary.r, secondary.g, secondary.b, 230);
-
+    private static void drawEditorOverlay(int primary, int secondary) {
         float p = 8.0f;
         float len = 16.0f;
-        // Four corner brackets.
+
         line(p, p, p + len, p, 2.0f, argb(primary, 235));
         line(p, p, p, p + len, 2.0f, argb(primary, 235));
         line(PANEL_WIDTH - p - len, p, PANEL_WIDTH - p, p, 2.0f, argb(secondary, 235));
@@ -411,8 +400,8 @@ public final class NanoHudRenderer {
         line(PANEL_WIDTH - p - len, PANEL_HEIGHT - p, PANEL_WIDTH - p, PANEL_HEIGHT - p, 2.0f, argb(primary, 235));
         line(PANEL_WIDTH - p, PANEL_HEIGHT - p - len, PANEL_WIDTH - p, PANEL_HEIGHT - p, 2.0f, argb(primary, 235));
 
-        fillRound(14.0f, PANEL_HEIGHT - 30.0f, 150.0f, 14.0f, 7.0f, argb(0, 0, 0, 170));
-        text("HOLD RSHIFT  •  DRAG TO PLACE", 20.0f, PANEL_HEIGHT - 27.0f, 6.4f, argb(230, 240, 255, 220));
+        fillRound(14.0f, PANEL_HEIGHT - 30.0f, 174.0f, 14.0f, 7.0f, argb(0, 0, 0, 170));
+        text("RSHIFT + DRAG  •  [ ] SCALE  •  F7 HIDE", 20.0f, PANEL_HEIGHT - 27.0f, 6.2f, argb(230, 240, 255, 220));
     }
 
     private static void bar(float x, float y, float width, float height, float fill,
@@ -423,8 +412,7 @@ public final class NanoHudRenderer {
 
         fillRound(x, y, width * value, height, height * 0.5f, fillColor);
         float shine = (float) ((time * 90.0) % Math.max(1.0, width * value));
-        fillRound(x + Math.max(0.0f, shine - 10.0f), y, 10.0f, height, height * 0.5f,
-            argb(255, 255, 255, 70));
+        fillRound(x + Math.max(0.0f, shine - 10.0f), y, 10.0f, height, height * 0.5f, argb(255, 255, 255, 70));
     }
 
     private static void fillGradient(float x, float y, float width, float height,
@@ -485,8 +473,8 @@ public final class NanoHudRenderer {
         return nvgTextBounds(vg, 0.0f, 0.0f, text, BOUNDS);
     }
 
-    private static int argb(Color color, int alpha) {
-        return argb(color.r, color.g, color.b, alpha);
+    private static int argb(int rgb, int alpha) {
+        return ((alpha & 255) << 24) | (rgb & 0xFFFFFF);
     }
 
     private static int argb(int r, int g, int b, int a) {
@@ -511,9 +499,8 @@ public final class NanoHudRenderer {
         nvgRGBA((byte) r, (byte) g, (byte) b, (byte) a, target);
     }
 
-    private static NVGColor color(NVGColor target, int r, int g, int b, int a) {
-        nvgRGBA((byte) r, (byte) g, (byte) b, (byte) a, target);
-        return target;
+    private static boolean keyDown(Minecraft mc, int key) {
+        return GLFW.glfwGetKey(mc.getWindow().handle(), key) == GLFW.GLFW_PRESS;
     }
 
     private static int resolveFramebuffer(RenderTarget target) {

@@ -5,16 +5,16 @@ import com.example.addon.modules.BaseFinder;
 import com.example.addon.modules.BlockESP;
 import com.example.addon.modules.ChickenFreeLook;
 import com.example.addon.modules.ChickenFullbright;
-import com.example.addon.modules.ChickenHud;
+import com.example.addon.modules.ChickenFreecam;
 import com.example.addon.modules.ChickenStorageESP;
 import com.example.addon.modules.ClearRender;
 import com.example.addon.modules.ClusterBypass;
+import com.example.addon.modules.CosmicSky;
 import com.example.addon.modules.Karambit;
 import com.example.addon.modules.PlayerFinder;
 import com.example.addon.modules.RedWings;
 import com.example.addon.modules.SpawnerFlag;
 import com.example.addon.modules.SusChunkFinder;
-import com.example.addon.modules.ChickenFreecam;
 
 import com.mojang.logging.LogUtils;
 import meteordevelopment.meteorclient.addons.GithubRepo;
@@ -42,18 +42,16 @@ public class AddonTemplate extends MeteorAddon {
         Modules.get().add(new ChickenStorageESP());
         Modules.get().add(new ClusterBypass());
         Modules.get().add(new ClearRender());
+        Modules.get().add(new CosmicSky());
         Modules.get().add(new Karambit());
         Modules.get().add(new PlayerFinder());
         Modules.get().add(new RedWings());
         Modules.get().add(new SpawnerFlag());
         Modules.get().add(new SusChunkFinder());
 
-        // The NanoVG HUD is intentionally not a Meteor HudElement and does not
-        // subscribe to Render2DEvent. Enable it by default on first install;
-        // an existing config can still turn it off.
-        ChickenHud hud = new ChickenHud();
-        Modules.get().add(hud);
-        hud.enable();
+        // The NanoVG HUD is intentionally not a Meteor module or HudElement.
+        // It is loaded by ChickenHudMixin and configured from
+        // config/chicken-client/nano-hud.properties.
 
         // Commands
         Commands.add(new CommandExample());
