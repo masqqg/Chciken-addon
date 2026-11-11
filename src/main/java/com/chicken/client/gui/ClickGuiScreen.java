@@ -9,6 +9,7 @@ import com.chicken.client.settings.Setting;
 import com.chicken.client.settings.SettingGroup;
 import java.util.ArrayList;
 import java.util.List;
+import net.minecraft.ChatFormatting;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.KeyEvent;
@@ -16,10 +17,7 @@ import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 import org.lwjgl.glfw.GLFW;
 
-/**
- * Hand drawn ClickGUI: no Meteor widgets, no vanilla buttons. Everything is
- * painted with GuiGraphics so the look matches the NanoVG HUD palette.
- */
+/** Hand drawn ClickGUI: no Meteor widgets, no vanilla buttons. */
 public final class ClickGuiScreen extends Screen {
     private static final int WIDTH = 452;
     private static final int HEIGHT = 312;
@@ -50,6 +48,12 @@ public final class ClickGuiScreen extends Screen {
         super(Component.literal("Chicken Client"));
     }
 
+    /** Bold, right slanted client style used for headers and module names. */
+    private void styled(GuiGraphics g, String text, int x, int y, int color) {
+        g.drawString(font, Component.literal(text).withStyle(ChatFormatting.BOLD, ChatFormatting.ITALIC)
+            .getVisualOrderText(), x, y, color);
+    }
+
     private int px() {
         return (width - WIDTH) / 2;
     }
@@ -77,7 +81,7 @@ public final class ClickGuiScreen extends Screen {
         g.fill(x, y, x + WIDTH, y + HEIGHT, CARD);
         g.fillGradient(x, y, x + WIDTH, y + 3, YELLOW, 0xFFFF8A00);
 
-        g.drawString(font, "CHICKEN CLIENT", x + 16, y + 12, YELLOW, false);
+        styled(g, "CHICKEN CLIENT", x + 16, y + 12, YELLOW);
         g.drawString(font, "STANDALONE  //  v" + ChickenClient.VERSION, x + 16, y + 25, MUTED, false);
 
         int tx = x + PANEL_X;
@@ -86,7 +90,7 @@ public final class ClickGuiScreen extends Screen {
             boolean active = c == category;
             boolean hover = inside(mouseX, mouseY, tx, y + 9, tw, 18);
             g.fill(tx, y + 9, tx + tw, y + 27, active ? YELLOW : (hover ? ROW_HOVER : ROW));
-            g.drawString(font, c.title(), tx + 7, y + 14, active ? 0xFF17130A : TEXT, false);
+            styled(g, c.title().toUpperCase(java.util.Locale.ROOT), tx + 7, y + 14, active ? 0xFF17130A : TEXT);
             tx += tw + 6;
         }
 
@@ -96,7 +100,7 @@ public final class ClickGuiScreen extends Screen {
             boolean sel = module == selected;
             g.fill(x + LIST_X, ry, x + LIST_X + LIST_W, ry + 20, sel ? ROW_SELECTED : (hover ? ROW_HOVER : CARD_DARK));
             g.fill(x + LIST_X + 8, ry + 8, x + LIST_X + 12, ry + 12, module.isEnabled() ? GREEN : 0xFF5A6572);
-            g.drawString(font, module.name(), x + LIST_X + 18, ry + 6, module.isEnabled() ? TEXT : 0xFFAEB8C2, false);
+            styled(g, module.name(), x + LIST_X + 18, ry + 6, module.isEnabled() ? TEXT : 0xFFAEB8C2);
             String bind = ChickenClient.keyName(module.getBind());
             g.drawString(font, bind, x + LIST_X + LIST_W - font.width(bind) - 8, ry + 6, MUTED, false);
             ry += 22;
@@ -115,7 +119,7 @@ public final class ClickGuiScreen extends Screen {
         g.fill(sx, sy, sx + PANEL_W, sy + HEIGHT - 78, CARD_DARK);
         g.fill(sx, sy, sx + PANEL_W, sy + 2, 0xFF3A2A00);
 
-        g.drawString(font, selected.name(), sx + 10, sy + 10, YELLOW, false);
+        styled(g, selected.name(), sx + 10, sy + 10, YELLOW);
         String desc = selected.description();
         if (font.width(desc) > PANEL_W - 20) desc = font.plainSubstrByWidth(desc, PANEL_W - 20) + "...";
         g.drawString(font, desc, sx + 10, sy + 24, MUTED, false);
@@ -134,8 +138,9 @@ public final class ClickGuiScreen extends Screen {
             g.drawString(font, setting.name(), sx + 14, rowY + 6, TEXT, false);
 
             if (setting instanceof BoolSetting bool) {
-                g.drawString(font, bool.get() ? "ON" : "OFF", sx + PANEL_W - 14 - font.width(bool.get() ? "ON" : "OFF"),
-                    rowY + 6, bool.get() ? GREEN : MUTED, false);
+                String value = bool.get() ? "ON" : "OFF";
+                g.drawString(font, value, sx + PANEL_W - 14 - font.width(value), rowY + 6,
+                    bool.get() ? GREEN : MUTED, false);
             } else if (setting instanceof DoubleSetting slider) {
                 int bx = sx + BAR_OFFSET;
                 int by = rowY + 7;
