@@ -1,0 +1,572 @@
+package com.example.addon.hud;
+
+import com.example.addon.modules.ChickenHud;
+import com.mojang.blaze3d.opengl.DirectStateAccess;
+import com.mojang.blaze3d.opengl.GlDevice;
+import com.mojang.blaze3d.opengl.GlStateManager;
+import com.mojang.blaze3d.opengl.GlTexture;
+import com.mojang.blaze3d.pipeline.RenderTarget;
+import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.blaze3d.textures.GpuTexture;
+import meteordevelopment.meteorclient.systems.modules.Modules;
+import meteordevelopment.meteorclient.utils.render.color.Color;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.player.LocalPlayer;
+import org.lwjgl.nanovg.NVGColor;
+import org.lwjgl.nanovg.NVGPaint;
+import org.lwjgl.opengl.GL11C;
+import org.lwjgl.opengl.GL30C;
+import org.lwjgl.opengl.GL33C;
+import org.lwjgl.system.MemoryUtil;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.InputStream;
+import java.nio.ByteBuffer;
+import java.nio.FloatBuffer;
+import java.util.Locale;
+
+import static org.lwjgl.nanovg.NanoVG.NVG_ALIGN_LEFT;
+import static org.lwjgl.nanovg.NanoVG.NVG_ALIGN_TOP;
+import static org.lwjgl.nanovg.NanoVG.nvgBeginFrame;
+import static org.lwjgl.nanovg.NanoVG.nvgBeginPath;
+import static org.lwjgl.nanovg.NanoVG.nvgCircle;
+import static org.lwjgl.nanovg.NanoVG.nvgCreateFontMem;
+import static org.lwjgl.nanovg.NanoVG.nvgEndFrame;
+import static org.lwjgl.nanovg.NanoVG.nvgFill;
+import static org.lwjgl.nanovg.NanoVG.nvgFillColor;
+import static org.lwjgl.nanovg.NanoVG.nvgFillPaint;
+import static org.lwjgl.nanovg.NanoVG.nvgFontFaceId;
+import static org.lwjgl.nanovg.NanoVG.nvgFontSize;
+import static org.lwjgl.nanovg.NanoVG.nvgGlobalAlpha;
+import static org.lwjgl.nanovg.NanoVG.nvgLineTo;
+import static org.lwjgl.nanovg.NanoVG.nvgLinearGradient;
+import static org.lwjgl.nanovg.NanoVG.nvgMoveTo;
+import static org.lwjgl.nanovg.NanoVG.nvgRGBA;
+import static org.lwjgl.nanovg.NanoVG.nvgRect;
+import static org.lwjgl.nanovg.NanoVG.nvgRestore;
+import static org.lwjgl.nanovg.NanoVG.nvgRoundedRect;
+import static org.lwjgl.nanovg.NanoVG.nvgSave;
+import static org.lwjgl.nanovg.NanoVG.nvgScale;
+import static org.lwjgl.nanovg.NanoVG.nvgStroke;
+import static org.lwjgl.nanovg.NanoVG.nvgStrokeColor;
+import static org.lwjgl.nanovg.NanoVG.nvgStrokePaint;
+import static org.lwjgl.nanovg.NanoVG.nvgStrokeWidth;
+import static org.lwjgl.nanovg.NanoVG.nvgText;
+import static org.lwjgl.nanovg.NanoVG.nvgTextAlign;
+import static org.lwjgl.nanovg.NanoVG.nvgTextBounds;
+import static org.lwjgl.nanovg.NanoVG.nvgTranslate;
+import static org.lwjgl.nanovg.NanoVGGL3.NVG_ANTIALIAS;
+import static org.lwjgl.nanovg.NanoVGGL3.NVG_STENCIL_STROKES;
+import static org.lwjgl.nanovg.NanoVGGL3.nvgCreate;
+
+/**
+ * A deliberately Meteor-renderer-free NanoVG HUD.
+ *
+ * <p>It owns its NanoVG context, font, GL frame setup and drawing. The only
+ * integration point is the in-game HUD mixin, which calls {@link #render}.
+ * No Meteor {@code Render2DEvent}, {@code HudElement} or HUD editor is used.</p>
+ */
+public final class NanoHudRenderer {
+    private static final Logger LOG = LoggerFactory.getLogger("ChickenClient/NanoVG");
+
+    private static final float PANEL_WIDTH = 272.0f;
+    private static final float PANEL_HEIGHT = 186.0f;
+
+    private static long vg;
+    private static int font = -1;
+    private static ByteBuffer fontData;
+    private static boolean failed;
+
+    private static final NVGColor COLOR_A = NVGColor.malloc();
+    private static final NVGColor COLOR_B = NVGColor.malloc();
+    private static final NVGPaint PAINT = NVGPaint.malloc();
+    private static final FloatBuffer BOUNDS = MemoryUtil.memAllocFloat(4);
+
+    private static boolean dragging;
+    private static double dragOffsetX;
+    private static double dragOffsetY;
+
+    private NanoHudRenderer() {
+    }
+
+    public static void render(ChickenHud hud) {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.level == null || mc.player == null || mc.getWindow().isIconified()) return;
+        if (mc.options.hideGui) return;
+
+        if (!ensureContext()) return;
+
+        RenderTarget target = mc.getMainRenderTarget();
+        int guiWidth = mc.getWindow().getGuiScaledWidth();
+        int guiHeight = mc.getWindow().getGuiScaledHeight();
+
+        if (guiWidth <= 0 || guiHeight <= 0 || target.width <= 0 || target.height <= 0) return;
+
+        int fbo = resolveFramebuffer(target);
+        if (fbo == -1) return;
+
+        double mouseX = mc.mouseHandler.getScaledXPos(mc.getWindow());
+        double mouseY = mc.mouseHandler.getScaledYPos(mc.getWindow());
+        boolean editor = hud.editorKey.get().isPressed();
+        boolean leftPressed = mc.mouseHandler.isLeftPressed();
+
+        // Release the grabbed cursor only while the editor key is held so the HUD
+        // can be placed with the mouse without opening a Minecraft screen.
+        if (editor && mc.screen == null && mc.mouseHandler.isMouseGrabbed()) mc.mouseHandler.releaseMouse();
+        if (!editor && mc.screen == null && !mc.mouseHandler.isMouseGrabbed()) mc.mouseHandler.grabMouse();
+
+        handleDragging(hud, editor, leftPressed, mouseX, mouseY);
+
+        float dpr = (float) target.width / guiWidth;
+
+        GlStateManager._glBindFramebuffer(GL30C.GL_FRAMEBUFFER, fbo);
+        GlStateManager._viewport(0, 0, target.width, target.height);
+        GL33C.glBindSampler(0, 0);
+
+        nvgBeginFrame(vg, target.width, target.height, dpr);
+        nvgTextAlign(vg, NVG_ALIGN_LEFT | NVG_ALIGN_TOP);
+
+        try {
+            draw(hud, mc, editor);
+        } catch (Throwable throwable) {
+            LOG.error("NanoVG HUD draw failed", throwable);
+        }
+
+        nvgEndFrame(vg);
+
+        // Keep the state sane for the rest of the GUI pass.
+        GlStateManager._disableDepthTest();
+        GlStateManager._disableCull();
+        GlStateManager._enableBlend();
+        GlStateManager._blendFuncSeparate(GL11C.GL_SRC_ALPHA, GL11C.GL_ONE_MINUS_SRC_ALPHA, GL11C.GL_ONE, GL11C.GL_ZERO);
+    }
+
+    private static void handleDragging(ChickenHud hud, boolean editor, boolean leftPressed, double mouseX, double mouseY) {
+        if (!editor) {
+            if (dragging) {
+                hud.endDrag();
+                dragging = false;
+            }
+            return;
+        }
+
+        double scale = hud.scale.get();
+        double panelX = hud.panelX();
+        double panelY = hud.panelY();
+        double panelWidth = PANEL_WIDTH * scale;
+        double panelHeight = PANEL_HEIGHT * scale;
+
+        if (leftPressed) {
+            if (!dragging
+                && mouseX >= panelX && mouseX <= panelX + panelWidth
+                && mouseY >= panelY && mouseY <= panelY + panelHeight) {
+                dragging = true;
+                dragOffsetX = mouseX - panelX;
+                dragOffsetY = mouseY - panelY;
+                hud.beginDrag(panelX, panelY);
+            }
+
+            if (dragging) {
+                hud.dragTo(mouseX - dragOffsetX, mouseY - dragOffsetY);
+            }
+        }
+        else if (dragging) {
+            hud.endDrag();
+            dragging = false;
+        }
+    }
+
+    private static void draw(ChickenHud hud, Minecraft mc, boolean editor) {
+        double time = (System.nanoTime() / 1_000_000_000.0);
+        double open = editor ? 1.0 : hud.openProgress();
+        double scale = hud.scale.get();
+
+        double panelX = hud.panelX() + (1.0 - open) * -26.0;
+        double panelY = hud.panelY() + (1.0 - open) * -8.0;
+        float alpha = (float) (0.08 + 0.92 * open);
+
+        nvgSave(vg);
+        nvgTranslate(vg, (float) panelX, (float) panelY);
+        nvgScale(vg, (float) scale, (float) scale);
+        nvgGlobalAlpha(vg, alpha);
+
+        drawPanel(hud, mc, time, editor);
+
+        nvgRestore(vg);
+    }
+
+    private static void drawPanel(ChickenHud hud, Minecraft mc, double time, boolean editor) {
+        Color primary = hud.primary.get();
+        Color secondary = hud.secondary.get();
+        Color accent = hud.accent.get();
+
+        int bgAlpha = hud.backgroundAlpha.get();
+
+        // Layered shadow and glass body.
+        fillRound(-8.0f, -8.0f, PANEL_WIDTH + 16.0f, PANEL_HEIGHT + 16.0f, 22.0f, argb(0, 0, 0, 80));
+        fillRound(-3.0f, -3.0f, PANEL_WIDTH + 6.0f, PANEL_HEIGHT + 6.0f, 19.0f, argb(0, 0, 0, 105));
+        fillRound(0.0f, 0.0f, PANEL_WIDTH, PANEL_HEIGHT, 16.0f, argb(8, 12, 18, bgAlpha));
+        fillRound(1.0f, 1.0f, PANEL_WIDTH - 2.0f, PANEL_HEIGHT - 2.0f, 15.0f, argb(14, 20, 30, (int) (bgAlpha * 0.72)));
+
+        // Animated gradient border.
+        setColor(COLOR_A, primary.r, primary.g, primary.b, 230);
+        setColor(COLOR_B, secondary.r, secondary.g, secondary.b, 230);
+        nvgBeginPath(vg);
+        nvgRoundedRect(vg, 0.8f, 0.8f, PANEL_WIDTH - 1.6f, PANEL_HEIGHT - 1.6f, 15.5f);
+        nvgStrokeWidth(vg, 1.4f);
+        nvgLinearGradient(vg, 0.0f, 0.0f, PANEL_WIDTH, PANEL_HEIGHT, COLOR_A, COLOR_B, PAINT);
+        nvgStrokePaint(vg, PAINT);
+        nvgStroke(vg);
+
+        // Top glow line and a soft moving scanline.
+        fillGradient(12.0f, 0.0f, PANEL_WIDTH - 24.0f, 1.6f, argb(primary, 220), argb(secondary, 20), true);
+        if (hud.animations.get()) {
+            float scanY = 8.0f + (float) ((time * 34.0) % (PANEL_HEIGHT - 16.0));
+            fillGradient(18.0f, scanY, PANEL_WIDTH - 36.0f, 1.0f, argb(primary, 0), argb(primary, 75), false);
+        }
+
+        if (hud.showWatermark.get()) {
+            drawCloud(30.0f, 25.0f, 1.0f, time, hud, primary, secondary);
+            drawWordmark("CHICKEN CLIENT", 58.0f, 16.0f, 12.5f, time, primary, secondary, accent);
+            text("NANO HUD  //  CHICKEN CLIENT", 58.0f, 33.0f, 7.2f, argb(190, 202, 218, 190));
+        }
+
+        // Header/body separator.
+        fillGradient(16.0f, 48.0f, PANEL_WIDTH - 32.0f, 1.0f, argb(primary, 80), argb(secondary, 20), true);
+
+        LocalPlayer player = mc.player;
+        if (hud.showPlayer.get() && player != null) {
+            drawPlayerCard(hud, mc, player, time, primary, secondary, accent);
+        }
+
+        if (hud.showStats.get() && player != null) {
+            drawStats(mc, player, time, primary, secondary, accent);
+        }
+
+        // Footer marker.
+        fillRound(16.0f, PANEL_HEIGHT - 15.0f, 3.0f, 3.0f, 1.5f, argb(secondary, 220));
+        text("CHICKEN CLIENT  •  INDEPENDENT HUD", 22.0f, PANEL_HEIGHT - 18.0f, 6.4f, argb(150, 170, 190, 145));
+
+        if (editor) {
+            drawEditorOverlay(hud, primary, secondary, time);
+        }
+    }
+
+    private static void drawPlayerCard(ChickenHud hud, Minecraft mc, LocalPlayer player, double time,
+                                       Color primary, Color secondary, Color accent) {
+        float top = 58.0f;
+
+        // Avatar plate.
+        fillRound(18.0f, top, 44.0f, 44.0f, 13.0f, argb(30, 42, 58, 220));
+        fillRoundGradient(19.0f, top + 1.0f, 42.0f, 42.0f, 12.0f,
+            argb(primary, 70), argb(secondary, 45), true);
+
+        nvgBeginPath(vg);
+        nvgCircle(vg, 40.0f, top + 18.0f, 7.8f);
+        nvgRoundedRect(vg, 29.0f, top + 27.0f, 22.0f, 15.0f, 7.0f);
+        nvgFillColor(vg, color(COLOR_A, 235, 242, 255, 225));
+        nvgFill(vg);
+
+        String name = player.getName().getString();
+        text(name, 72.0f, top + 2.0f, 12.2f, argb(242, 248, 255, 255));
+        text("LOCAL PLAYER", 72.0f, top + 17.0f, 7.0f, argb(140, 170, 195, 190));
+
+        float health = Math.max(0.0f, player.getHealth());
+        float maxHealth = Math.max(1.0f, player.getMaxHealth());
+        float healthRatio = Math.min(1.0f, health / maxHealth);
+        bar(72.0f, top + 29.0f, 142.0f, 6.0f, healthRatio, argb(255, 61, 90, 235), argb(26, 34, 52, 220), time);
+
+        float armorRatio = Math.min(1.0f, player.getArmorValue() / 20.0f);
+        bar(72.0f, top + 39.0f, 142.0f, 4.5f, armorRatio, argb(primary, 220), argb(20, 28, 40, 210), time);
+
+        bar(72.0f, top + 47.0f, 142.0f, 3.5f, player.experienceProgress, argb(accent, 220), argb(20, 28, 40, 210), time);
+
+        text(String.format(Locale.ROOT, "%.1f / %.0f", health, maxHealth),
+            218.0f, top + 28.0f, 6.7f, argb(230, 240, 250, 205));
+        text(String.format(Locale.ROOT, "ARMOR %d", player.getArmorValue()),
+            218.0f, top + 39.0f, 6.3f, argb(primary, 205));
+    }
+
+    private static void drawStats(Minecraft mc, LocalPlayer player, double time,
+                                  Color primary, Color secondary, Color accent) {
+        float top = 124.0f;
+        float left = 18.0f;
+        float col = 62.0f;
+
+        int ping = -1;
+        if (mc.getConnection() != null) {
+            var info = mc.getConnection().getPlayerInfo(player.getUUID());
+            if (info != null) ping = info.getLatency();
+        }
+
+        int fps = mc.getFps();
+        double speed = Math.sqrt(player.getDeltaMovement().x * player.getDeltaMovement().x
+            + player.getDeltaMovement().z * player.getDeltaMovement().z) * 20.0;
+        int modules = Modules.get().getActive().size();
+
+        stat("PING", ping < 0 ? "--" : ping + "ms", left, top);
+        stat("FPS", Integer.toString(fps), left + col, top);
+        stat("SPEED", String.format(Locale.ROOT, "%.1f", speed), left + col * 2.0f, top);
+        stat("MODULES", Integer.toString(modules), left + col * 3.0f, top);
+
+        fillGradient(16.0f, top + 26.0f, PANEL_WIDTH - 32.0f, 1.0f, argb(primary, 50), argb(secondary, 15), true);
+
+        text(String.format(Locale.ROOT, "XYZ  %.0f  %.0f  %.0f",
+                player.getX(), player.getY(), player.getZ()),
+            18.0f, top + 34.0f, 7.0f, argb(165, 185, 205, 190));
+        text(String.format(Locale.ROOT, "DIM  %s", player.level().dimension().toString()),
+            18.0f, top + 45.0f, 6.4f, argb(135, 160, 185, 165));
+
+        // Tiny animated wing motif in the bottom-right corner.
+        float baseX = PANEL_WIDTH - 42.0f;
+        float baseY = top + 38.0f;
+        float flap = (float) Math.sin(time * 3.2) * 2.0f;
+        line(baseX - 12.0f, baseY, baseX - 2.0f, baseY - 9.0f - flap, 1.3f, argb(secondary, 190));
+        line(baseX - 8.0f, baseY + 2.0f, baseX + 1.0f, baseY - 5.0f - flap, 1.0f, argb(primary, 150));
+        line(baseX + 12.0f, baseY, baseX + 2.0f, baseY - 9.0f - flap, 1.3f, argb(secondary, 190));
+        line(baseX + 8.0f, baseY + 2.0f, baseX - 1.0f, baseY - 5.0f - flap, 1.0f, argb(primary, 150));
+    }
+
+    private static void stat(String label, String value, float x, float y) {
+        text(label, x, y, 6.2f, argb(130, 155, 180, 170));
+        text(value, x, y + 10.0f, 9.0f, argb(235, 242, 255, 240));
+    }
+
+    private static void drawCloud(float cx, float cy, float scale, double time,
+                                  ChickenHud hud, Color primary, Color secondary) {
+        float bob = hud.animations.get() ? (float) Math.sin(time * 2.1) * 1.3f : 0.0f;
+        float pulse = hud.animations.get() ? (float) (0.5 + 0.5 * Math.sin(time * 3.0)) : 0.5f;
+
+        nvgSave(vg);
+        nvgTranslate(vg, cx, cy + bob);
+        nvgScale(vg, scale, scale);
+
+        // Soft glow.
+        nvgBeginPath(vg);
+        nvgCircle(vg, -8.0f, 2.0f, 11.0f + pulse);
+        nvgCircle(vg, 8.0f, 2.0f, 12.0f + pulse);
+        nvgRoundedRect(vg, -16.0f, 0.0f, 32.0f, 11.0f, 5.0f);
+        setColor(COLOR_A, primary.r, primary.g, primary.b, 18);
+        nvgFillColor(vg, COLOR_A);
+        nvgFill(vg);
+
+        // Cloud body with a diagonal gradient.
+        nvgBeginPath(vg);
+        nvgCircle(vg, -8.0f, 1.0f, 8.5f);
+        nvgCircle(vg, 7.0f, 0.0f, 10.0f);
+        nvgCircle(vg, 16.0f, 4.0f, 6.0f);
+        nvgRoundedRect(vg, -16.0f, 4.0f, 32.0f, 8.0f, 4.0f);
+        setColor(COLOR_A, primary.r, primary.g, primary.b, 245);
+        setColor(COLOR_B, secondary.r, secondary.g, secondary.b, 245);
+        nvgLinearGradient(vg, -16.0f, -8.0f, 16.0f, 12.0f, COLOR_A, COLOR_B, PAINT);
+        nvgFillPaint(vg, PAINT);
+        nvgFill(vg);
+
+        // Highlight and animated lightning.
+        fillRound(-8.0f, -3.0f, 14.0f, 3.0f, 1.5f, argb(255, 255, 255, 55));
+        if (hud.animations.get() && Math.sin(time * 6.2) > 0.35) {
+            nvgBeginPath(vg);
+            nvgMoveTo(vg, 2.0f, 13.0f);
+            nvgLineTo(vg, -1.0f, 18.0f);
+            nvgLineTo(vg, 4.0f, 17.0f);
+            nvgLineTo(vg, 1.0f, 24.0f);
+            nvgStrokeWidth(vg, 1.5f);
+            setColor(COLOR_A, 255, 244, 180, 230);
+            nvgStrokeColor(vg, COLOR_A);
+            nvgStroke(vg);
+        }
+
+        nvgRestore(vg);
+    }
+
+    private static void drawWordmark(String word, float x, float y, float size, double time,
+                                     Color primary, Color secondary, Color accent) {
+        if (font == -1) return;
+
+        float cursor = x;
+        for (int i = 0; i < word.length(); i++) {
+            String character = String.valueOf(word.charAt(i));
+            float t = i / (float) Math.max(1, word.length() - 1);
+            int color = mix(argb(primary, 255), argb(secondary, 255), t);
+            float wave = (float) Math.sin(time * 2.8 + i * 0.38) * 0.55f;
+            text(character, cursor, y + wave, size, color);
+            cursor += textWidth(character, size);
+        }
+    }
+
+    private static void drawEditorOverlay(ChickenHud hud, Color primary, Color secondary, double time) {
+        setColor(COLOR_A, primary.r, primary.g, primary.b, 230);
+        setColor(COLOR_B, secondary.r, secondary.g, secondary.b, 230);
+
+        float p = 8.0f;
+        float len = 16.0f;
+        // Four corner brackets.
+        line(p, p, p + len, p, 2.0f, argb(primary, 235));
+        line(p, p, p, p + len, 2.0f, argb(primary, 235));
+        line(PANEL_WIDTH - p - len, p, PANEL_WIDTH - p, p, 2.0f, argb(secondary, 235));
+        line(PANEL_WIDTH - p, p, PANEL_WIDTH - p, p + len, 2.0f, argb(secondary, 235));
+        line(p, PANEL_HEIGHT - p, p + len, PANEL_HEIGHT - p, 2.0f, argb(secondary, 235));
+        line(p, PANEL_HEIGHT - p - len, p, PANEL_HEIGHT - p, 2.0f, argb(secondary, 235));
+        line(PANEL_WIDTH - p - len, PANEL_HEIGHT - p, PANEL_WIDTH - p, PANEL_HEIGHT - p, 2.0f, argb(primary, 235));
+        line(PANEL_WIDTH - p, PANEL_HEIGHT - p - len, PANEL_WIDTH - p, PANEL_HEIGHT - p, 2.0f, argb(primary, 235));
+
+        fillRound(14.0f, PANEL_HEIGHT - 30.0f, 150.0f, 14.0f, 7.0f, argb(0, 0, 0, 170));
+        text("HOLD RSHIFT  •  DRAG TO PLACE", 20.0f, PANEL_HEIGHT - 27.0f, 6.4f, argb(230, 240, 255, 220));
+    }
+
+    private static void bar(float x, float y, float width, float height, float fill,
+                            int fillColor, int background, double time) {
+        fillRound(x, y, width, height, height * 0.5f, background);
+        float value = Math.max(0.0f, Math.min(1.0f, fill));
+        if (value <= 0.0f) return;
+
+        fillRound(x, y, width * value, height, height * 0.5f, fillColor);
+        float shine = (float) ((time * 90.0) % Math.max(1.0, width * value));
+        fillRound(x + Math.max(0.0f, shine - 10.0f), y, 10.0f, height, height * 0.5f,
+            argb(255, 255, 255, 70));
+    }
+
+    private static void fillGradient(float x, float y, float width, float height,
+                                     int start, int end, boolean vertical) {
+        setColor(COLOR_A, start);
+        setColor(COLOR_B, end);
+        nvgBeginPath(vg);
+        nvgRect(vg, x, y, width, height);
+        nvgLinearGradient(vg, x, y, vertical ? y + height : x + width, vertical ? y : y, COLOR_A, COLOR_B, PAINT);
+        nvgFillPaint(vg, PAINT);
+        nvgFill(vg);
+    }
+
+    private static void fillRoundGradient(float x, float y, float width, float height, float radius,
+                                          int start, int end, boolean vertical) {
+        setColor(COLOR_A, start);
+        setColor(COLOR_B, end);
+        nvgBeginPath(vg);
+        nvgRoundedRect(vg, x, y, width, height, radius);
+        nvgLinearGradient(vg, x, y, vertical ? y + height : x + width, vertical ? y : y, COLOR_A, COLOR_B, PAINT);
+        nvgFillPaint(vg, PAINT);
+        nvgFill(vg);
+    }
+
+    private static void fillRound(float x, float y, float width, float height, float radius, int color) {
+        setColor(COLOR_A, color);
+        nvgBeginPath(vg);
+        nvgRoundedRect(vg, x, y, width, height, radius);
+        nvgFillColor(vg, COLOR_A);
+        nvgFill(vg);
+    }
+
+    private static void line(float x1, float y1, float x2, float y2, float thickness, int color) {
+        setColor(COLOR_A, color);
+        nvgBeginPath(vg);
+        nvgMoveTo(vg, x1, y1);
+        nvgLineTo(vg, x2, y2);
+        nvgStrokeWidth(vg, thickness);
+        nvgStrokeColor(vg, COLOR_A);
+        nvgStroke(vg);
+    }
+
+    private static void text(String text, float x, float y, float size, int color) {
+        if (font == -1 || text == null || text.isEmpty()) return;
+
+        setColor(COLOR_A, color);
+        nvgFontSize(vg, size);
+        nvgFontFaceId(vg, font);
+        nvgFillColor(vg, COLOR_A);
+        nvgText(vg, x, y, text);
+    }
+
+    private static float textWidth(String text, float size) {
+        if (font == -1 || text == null || text.isEmpty()) return 0.0f;
+
+        nvgFontSize(vg, size);
+        nvgFontFaceId(vg, font);
+        return nvgTextBounds(vg, 0.0f, 0.0f, text, BOUNDS);
+    }
+
+    private static int argb(Color color, int alpha) {
+        return argb(color.r, color.g, color.b, alpha);
+    }
+
+    private static int argb(int r, int g, int b, int a) {
+        return ((a & 255) << 24) | ((r & 255) << 16) | ((g & 255) << 8) | (b & 255);
+    }
+
+    private static int mix(int from, int to, float t) {
+        t = Math.max(0.0f, Math.min(1.0f, t));
+        int a = (int) (((from >>> 24) & 255) + (((to >>> 24) & 255) - ((from >>> 24) & 255)) * t);
+        int r = (int) (((from >>> 16) & 255) + (((to >>> 16) & 255) - ((from >>> 16) & 255)) * t);
+        int g = (int) (((from >>> 8) & 255) + (((to >>> 8) & 255) - ((from >>> 8) & 255)) * t);
+        int b = (int) ((from & 255) + ((to & 255) - (from & 255)) * t);
+        return argb(r, g, b, a);
+    }
+
+    private static void setColor(NVGColor target, int argb) {
+        nvgRGBA((byte) ((argb >> 16) & 255), (byte) ((argb >> 8) & 255),
+            (byte) (argb & 255), (byte) ((argb >>> 24) & 255), target);
+    }
+
+    private static void setColor(NVGColor target, int r, int g, int b, int a) {
+        nvgRGBA((byte) r, (byte) g, (byte) b, (byte) a, target);
+    }
+
+    private static NVGColor color(NVGColor target, int r, int g, int b, int a) {
+        nvgRGBA((byte) r, (byte) g, (byte) b, (byte) a, target);
+        return target;
+    }
+
+    private static int resolveFramebuffer(RenderTarget target) {
+        GpuTexture colorTexture = target.getColorTexture();
+        GpuTexture depthTexture = target.getDepthTexture();
+
+        if (!(colorTexture instanceof GlTexture color) || !(depthTexture instanceof GlTexture depth)) return -1;
+        if (!(RenderSystem.getDevice() instanceof GlDevice device)) return -1;
+
+        DirectStateAccess stateAccess = device.directStateAccess();
+        return color.getFbo(stateAccess, depth);
+    }
+
+    private static boolean ensureContext() {
+        if (failed) return false;
+        if (vg != 0) return true;
+
+        try {
+            vg = nvgCreate(NVG_ANTIALIAS | NVG_STENCIL_STROKES);
+            if (vg == 0) {
+                failed = true;
+                LOG.error("Could not create a NanoVG context");
+                return false;
+            }
+
+            fontData = loadFont();
+            if (fontData != null) {
+                font = nvgCreateFontMem(vg, "inter", fontData, false);
+                if (font == -1) LOG.warn("Could not register the bundled Inter font");
+            }
+            else {
+                LOG.warn("Bundled Inter font was not found; NanoVG text will be hidden");
+            }
+
+            return true;
+        } catch (Throwable throwable) {
+            failed = true;
+            LOG.error("NanoVG initialization failed", throwable);
+            return false;
+        }
+    }
+
+    private static ByteBuffer loadFont() {
+        try (InputStream input = NanoHudRenderer.class.getResourceAsStream("/assets/template/inter.ttf")) {
+            if (input == null) return null;
+
+            byte[] bytes = input.readAllBytes();
+            ByteBuffer buffer = MemoryUtil.memAlloc(bytes.length);
+            buffer.put(bytes).flip();
+            return buffer;
+        } catch (Throwable throwable) {
+            LOG.warn("Could not load the bundled Inter font", throwable);
+            return null;
+        }
+    }
+}

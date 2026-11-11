@@ -10,7 +10,8 @@
     "ChickenCameraMixin",
     "ChickenEntityTurnMixin",
     "ChickenClientInputMixin",
-    "ChickenGameRendererMixin"
+    "ChickenGameRendererMixin",
+    "ChickenHudMixin"
   ],
   "injectors": {
     "defaultRequire": 1

@@ -12,6 +12,8 @@ base {
 }
 
 repositories {
+    mavenCentral()
+
     maven {
         name = "meteor-maven"
         url = uri("https://maven.meteordev.org/releases")
@@ -30,6 +32,13 @@ dependencies {
 
     // Meteor
     modImplementation(libs.meteor.client)
+
+    // NanoVG (LWJGL 3.3.3, matching the version shipped with Minecraft)
+    implementation("org.lwjgl:lwjgl-nanovg:3.3.3")
+    include("org.lwjgl:lwjgl-nanovg:3.3.3")
+    listOf("natives-windows", "natives-linux", "natives-macos", "natives-macos-arm64").forEach {
+        include("org.lwjgl:lwjgl-nanovg:3.3.3:$it")
+    }
 }
 
 java {
