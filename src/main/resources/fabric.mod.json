@@ -3,7 +3,7 @@
   "id": "chicken-client",
   "version": "${version}",
   "name": "Chicken Client",
-  "description": "Chicken Client - movement, ESP and visual utilities, built on the Fabric mod loader.",
+  "description": "Chicken Client - standalone Fabric client: modules, settings, config, ClickGUI and a NanoVG HUD without any other client framework.",
   "authors": [
     "MasQ"
   ],
@@ -13,24 +13,16 @@
   "icon": "assets/template/icon.png",
   "environment": "client",
   "entrypoints": {
-    "meteor": [
-      "com.example.addon.AddonTemplate"
+    "client": [
+      "com.chicken.client.ChickenClient"
     ]
   },
   "mixins": [
     "chicken-client.mixins.json"
   ],
-  "custom": {
-    "meteor-client:color": "255,196,0",
-    "modmenu": {
-      "parent": {
-        "id": "meteor-client"
-      }
-    }
-  },
   "depends": {
     "java": ">=${jdk_version}",
     "minecraft": "${minecraft_version}",
-    "meteor-client": "*"
+    "fabricloader": ">=0.16.0"
   }
 }

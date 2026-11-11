@@ -1,9 +1,9 @@
-package com.example.addon.mixin;
+package com.chicken.client.mixin;
 
-import com.example.addon.modules.ChickenFullbright;
+import com.chicken.client.ChickenClient;
+import com.chicken.client.modules.Fullbright;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.textures.GpuTexture;
-import meteordevelopment.meteorclient.systems.modules.Modules;
 import net.minecraft.client.renderer.LightTexture;
 import net.minecraft.util.ARGB;
 import org.spongepowered.asm.mixin.Final;
@@ -21,8 +21,8 @@ public abstract class ChickenFullbrightMixin {
 
     @Inject(method = "updateLightTexture", at = @At("HEAD"), cancellable = true)
     private void chicken$fullbright(float partialTicks, CallbackInfo ci) {
-        ChickenFullbright fullbright = Modules.get().get(ChickenFullbright.class);
-        if (fullbright == null || !fullbright.isActive()) return;
+        Fullbright fullbright = ChickenClient.module(Fullbright.class);
+        if (fullbright == null || !fullbright.isEnabled()) return;
 
         RenderSystem.getDevice().createCommandEncoder()
             .clearColorTexture(texture, ARGB.color(255, 255, 255, 255));

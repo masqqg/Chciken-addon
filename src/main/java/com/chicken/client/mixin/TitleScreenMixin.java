@@ -1,4 +1,4 @@
-package com.example.addon.mixin;
+package com.chicken.client.mixin;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
@@ -9,15 +9,15 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * Adds the Chicken Client / MasQ signature directly to the vanilla title
- * screen so it does not depend on Mod Menu's author metadata or caching.
+ * Adds the Chicken Client / MasQ signature to the vanilla title screen so it
+ * does not depend on Mod Menu metadata or caching.
  */
 @Mixin(TitleScreen.class)
 public abstract class TitleScreenMixin {
     @Inject(method = "render", at = @At("TAIL"))
     private void chicken$renderMasqSignature(GuiGraphics context, int mouseX, int mouseY, float delta, CallbackInfo ci) {
         Minecraft mc = Minecraft.getInstance();
-        String signature = "Chicken Client  •  by MasQ";
+        String signature = "Chicken Client  \u2022  by MasQ";
         int x = 6;
         int y = mc.getWindow().getGuiScaledHeight() - 14;
         int width = mc.font.width(signature) + 10;

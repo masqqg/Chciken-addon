@@ -1,10 +1,9 @@
 {
   "required": true,
-  "package": "com.example.addon.mixin",
+  "package": "com.chicken.client.mixin",
   "compatibilityLevel": "JAVA_21",
   "client": [
-    "ExampleMixin",
-    "KarambitMixin",
+    "MinecraftMixin",
     "ChickenFullbrightMixin",
     "ChickenCameraAccessor",
     "ChickenCameraMixin",

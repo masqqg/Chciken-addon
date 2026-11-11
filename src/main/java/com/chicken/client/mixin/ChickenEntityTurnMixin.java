@@ -1,8 +1,8 @@
-package com.example.addon.mixin;
+package com.chicken.client.mixin;
 
-import com.example.addon.modules.ChickenFreeLook;
-import com.example.addon.modules.ChickenFreecam;
-import meteordevelopment.meteorclient.systems.modules.Modules;
+import com.chicken.client.ChickenClient;
+import com.chicken.client.modules.FreeLook;
+import com.chicken.client.modules.Freecam;
 import net.minecraft.client.Minecraft;
 import net.minecraft.world.entity.Entity;
 import org.spongepowered.asm.mixin.Mixin;
@@ -16,15 +16,15 @@ public abstract class ChickenEntityTurnMixin {
     private void chicken$turnCamera(double yaw, double pitch, CallbackInfo ci) {
         if ((Object) this != Minecraft.getInstance().player) return;
 
-        ChickenFreecam freecam = Modules.get().get(ChickenFreecam.class);
-        if (freecam != null && freecam.isActive()) {
+        Freecam freecam = ChickenClient.module(Freecam.class);
+        if (freecam != null && freecam.isEnabled()) {
             freecam.turn(yaw, pitch);
             ci.cancel();
             return;
         }
 
-        ChickenFreeLook freeLook = Modules.get().get(ChickenFreeLook.class);
-        if (freeLook != null && freeLook.isActive()) {
+        FreeLook freeLook = ChickenClient.module(FreeLook.class);
+        if (freeLook != null && freeLook.isEnabled()) {
             freeLook.turn(yaw, pitch);
             ci.cancel();
         }

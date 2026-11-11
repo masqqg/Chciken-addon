@@ -1,4 +1,4 @@
-package com.example.addon.mixin;
+package com.chicken.client.mixin;
 
 import net.minecraft.client.Camera;
 import net.minecraft.world.phys.Vec3;

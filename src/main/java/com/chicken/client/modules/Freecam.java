@@ -1,46 +1,23 @@
-package com.example.addon.modules;
+package com.chicken.client.modules;
 
-import com.example.addon.AddonTemplate;
-import meteordevelopment.meteorclient.events.world.TickEvent;
-import meteordevelopment.meteorclient.settings.BoolSetting;
-import meteordevelopment.meteorclient.settings.DoubleSetting;
-import meteordevelopment.meteorclient.settings.Setting;
-import meteordevelopment.meteorclient.settings.SettingGroup;
-import meteordevelopment.meteorclient.systems.modules.Module;
-import meteordevelopment.orbit.EventHandler;
+import com.chicken.client.ChickenClient;
+import com.chicken.client.core.Category;
+import com.chicken.client.core.Module;
+import com.chicken.client.settings.BoolSetting;
+import com.chicken.client.settings.DoubleSetting;
+import net.minecraft.client.Minecraft;
 import net.minecraft.util.Mth;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Vector3d;
 
-/**
- * A camera that leaves the player behind. Movement has no collision and the
- * player is frozen while the camera is detached, so you can inspect a base or
- * watch a mining job from outside.
- */
-public class ChickenFreecam extends Module {
-    private final SettingGroup sgGeneral = settings.getDefaultGroup();
-
-    private final Setting<Double> speed = sgGeneral.add(new DoubleSetting.Builder()
-        .name("speed")
-        .description("Camera movement speed.")
-        .defaultValue(1.0)
-        .range(0.1, 10.0)
-        .sliderRange(0.2, 4.0)
-        .build());
-
-    private final Setting<Double> sensitivity = sgGeneral.add(new DoubleSetting.Builder()
-        .name("sensitivity")
-        .description("Mouse sensitivity while the camera is detached.")
-        .defaultValue(1.0)
-        .range(0.1, 5.0)
-        .sliderRange(0.2, 3.0)
-        .build());
-
-    private final Setting<Boolean> showHands = sgGeneral.add(new BoolSetting.Builder()
-        .name("show-hands")
-        .description("Render the first-person hand while in freecam.")
-        .defaultValue(false)
-        .build());
+/** Detached, collision-free camera that leaves the player behind. */
+public final class Freecam extends Module {
+    private final DoubleSetting speed = settings().add(
+        new DoubleSetting("speed", "Camera movement speed.", 1.0, 0.1, 10.0));
+    private final DoubleSetting sensitivity = settings().add(
+        new DoubleSetting("sensitivity", "Mouse sensitivity while detached.", 1.0, 0.1, 5.0));
+    private final BoolSetting showHands = settings().add(
+        new BoolSetting("show-hands", "Render the first person hand while in freecam.", false));
 
     private final Vector3d pos = new Vector3d();
     private final Vector3d prevPos = new Vector3d();
@@ -50,12 +27,13 @@ public class ChickenFreecam extends Module {
     private float lastYaw;
     private float lastPitch;
 
-    public ChickenFreecam() {
-        super(AddonTemplate.CATEGORY, "chicken-freecam", "Detaches the camera and lets you fly through blocks.");
+    public Freecam() {
+        super(Category.MOVEMENT, "freecam", "Detaches the camera and lets you fly through blocks.");
     }
 
     @Override
     public void onActivate() {
+        Minecraft mc = ChickenClient.mc();
         if (mc.player == null) return;
 
         Vec3 eye = mc.player.getEyePosition();
@@ -68,11 +46,8 @@ public class ChickenFreecam extends Module {
     }
 
     @Override
-    public void onDeactivate() {
-    }
-
-    @EventHandler
-    private void onTick(TickEvent.Post event) {
+    public void onTick() {
+        Minecraft mc = ChickenClient.mc();
         if (mc.player == null || mc.screen != null) return;
 
         double forward = 0.0;
@@ -96,7 +71,6 @@ public class ChickenFreecam extends Module {
         double sin = Math.sin(yawRad);
         double cos = Math.cos(yawRad);
 
-        // Minecraft: yaw 0 looks toward +Z, right is -X when looking south.
         double dx = (-sin * forward - cos * strafe) * speed.get() * 0.5;
         double dz = (cos * forward - sin * strafe) * speed.get() * 0.5;
         double dy = vertical * speed.get() * 0.5;
@@ -121,7 +95,7 @@ public class ChickenFreecam extends Module {
     }
 
     public boolean renderHands() {
-        return !isActive() || showHands.get();
+        return !isEnabled() || showHands.get();
     }
 
     public Vec3 getCameraPosition(float tickDelta) {

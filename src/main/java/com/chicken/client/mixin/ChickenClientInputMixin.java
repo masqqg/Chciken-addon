@@ -1,7 +1,7 @@
-package com.example.addon.mixin;
+package com.chicken.client.mixin;
 
-import com.example.addon.modules.ChickenFreecam;
-import meteordevelopment.meteorclient.systems.modules.Modules;
+import com.chicken.client.ChickenClient;
+import com.chicken.client.modules.Freecam;
 import net.minecraft.client.player.ClientInput;
 import net.minecraft.client.player.KeyboardInput;
 import net.minecraft.world.entity.player.Input;
@@ -15,8 +15,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public abstract class ChickenClientInputMixin extends ClientInput {
     @Inject(method = "tick", at = @At("TAIL"))
     private void chicken$freecamInput(CallbackInfo ci) {
-        ChickenFreecam freecam = Modules.get().get(ChickenFreecam.class);
-        if (freecam == null || !freecam.isActive()) return;
+        Freecam freecam = ChickenClient.module(Freecam.class);
+        if (freecam == null || !freecam.isEnabled()) return;
 
         keyPresses = Input.EMPTY;
         moveVector = Vec2.ZERO;

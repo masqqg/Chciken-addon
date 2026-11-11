@@ -1,4 +1,4 @@
-package com.example.addon.mixin;
+package com.chicken.client.mixin;
 
 import com.example.addon.hud.NanoHudRenderer;
 import net.minecraft.client.DeltaTracker;

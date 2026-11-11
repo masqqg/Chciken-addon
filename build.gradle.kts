@@ -13,15 +13,6 @@ base {
 
 repositories {
     mavenCentral()
-
-    maven {
-        name = "meteor-maven"
-        url = uri("https://maven.meteordev.org/releases")
-    }
-    maven {
-        name = "meteor-maven-snapshots"
-        url = uri("https://maven.meteordev.org/snapshots")
-    }
 }
 
 dependencies {
@@ -29,9 +20,6 @@ dependencies {
     minecraft(libs.minecraft)
     mappings(loom.officialMojangMappings())
     modImplementation(libs.fabric.loader)
-
-    // Meteor
-    modImplementation(libs.meteor.client)
 
     // NanoVG (LWJGL 3.3.3, matching the version shipped with Minecraft)
     implementation("org.lwjgl:lwjgl-nanovg:3.3.3")

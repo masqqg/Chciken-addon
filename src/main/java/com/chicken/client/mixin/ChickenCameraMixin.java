@@ -1,8 +1,8 @@
-package com.example.addon.mixin;
+package com.chicken.client.mixin;
 
-import com.example.addon.modules.ChickenFreeLook;
-import com.example.addon.modules.ChickenFreecam;
-import meteordevelopment.meteorclient.systems.modules.Modules;
+import com.chicken.client.ChickenClient;
+import com.chicken.client.modules.FreeLook;
+import com.chicken.client.modules.Freecam;
 import net.minecraft.client.Camera;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.Level;
@@ -17,10 +17,10 @@ public abstract class ChickenCameraMixin {
     @Inject(method = "setup", at = @At("TAIL"))
     private void chicken$applyCustomCamera(Level level, Entity entity, boolean thirdPerson,
                                             boolean inverseView, float tickDelta, CallbackInfo ci) {
-        ChickenFreecam freecam = Modules.get().get(ChickenFreecam.class);
         ChickenCameraAccessor accessor = (ChickenCameraAccessor) (Object) this;
 
-        if (freecam != null && freecam.isActive()) {
+        Freecam freecam = ChickenClient.module(Freecam.class);
+        if (freecam != null && freecam.isEnabled()) {
             Vec3 position = freecam.getCameraPosition(tickDelta);
             accessor.chicken$setPosition(position);
             accessor.chicken$setRotation(freecam.getYaw(tickDelta), freecam.getPitch(tickDelta));
@@ -28,8 +28,8 @@ public abstract class ChickenCameraMixin {
             return;
         }
 
-        ChickenFreeLook freeLook = Modules.get().get(ChickenFreeLook.class);
-        if (freeLook != null && freeLook.isActive()) {
+        FreeLook freeLook = ChickenClient.module(FreeLook.class);
+        if (freeLook != null && freeLook.isEnabled()) {
             if (freeLook.isThroughWalls()) {
                 accessor.chicken$setPosition(freeLook.getCameraPosition(tickDelta));
                 accessor.chicken$setDetached(true);
