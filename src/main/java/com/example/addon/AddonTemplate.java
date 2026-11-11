@@ -30,6 +30,7 @@ import meteordevelopment.meteorclient.systems.hud.XAnchor;
 import meteordevelopment.meteorclient.systems.hud.YAnchor;
 import meteordevelopment.meteorclient.systems.modules.Category;
 import meteordevelopment.meteorclient.systems.modules.Modules;
+import meteordevelopment.meteorclient.utils.Utils;
 import meteordevelopment.orbit.EventHandler;
 import org.slf4j.Logger;
 
@@ -39,7 +40,6 @@ public class AddonTemplate extends MeteorAddon {
     public static final Category CATEGORY = new Category("Chicken Client");
     public static final HudGroup HUD_GROUP = new HudGroup("Chicken Client");
 
-    private int hudBootstrapTicks;
     private boolean hudBootstrapDone;
 
     @Override
@@ -70,15 +70,14 @@ public class AddonTemplate extends MeteorAddon {
             hud.register(HudExample.INFO);
         }
 
-        // HUD config is loaded after addon init, so add the watermark after the
-        // HUD's first tick instead of racing the config load.
+        // HUD config is loaded after addon init, so add the watermark once the
+        // world is ready and the HUD's own first-tick reset has already run.
         MeteorClient.EVENT_BUS.subscribe(this);
     }
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
-        if (hudBootstrapDone) return;
-        if (++hudBootstrapTicks < 2) return;
+        if (hudBootstrapDone || !Utils.canUpdate() || Utils.isLoading()) return;
 
         Hud hud = Hud.get();
         if (hud == null) return;
