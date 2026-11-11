@@ -8,8 +8,9 @@ import com.chicken.client.settings.DoubleSetting;
 import com.chicken.client.settings.Setting;
 import com.chicken.client.settings.SettingGroup;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
-import net.minecraft.ChatFormatting;
+import java.util.Map;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.KeyEvent;
@@ -17,49 +18,55 @@ import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 import org.lwjgl.glfw.GLFW;
 
-/** Hand drawn ClickGUI: no Meteor widgets, no vanilla buttons. */
+/**
+ * Modern NanoVG menu. Everything is drawn with the bundled smooth font:
+ * rounded glass panels, gradient accents, animated open, animated hover and
+ * animated sliders. No Minecraft bitmap font is used.
+ */
 public final class ClickGuiScreen extends Screen {
-    private static final int WIDTH = 452;
-    private static final int HEIGHT = 312;
+    private static final int W = 620;
+    private static final int H = 396;
 
-    private static final int CARD = 0xF0141820;
-    private static final int CARD_DARK = 0xFF0B0F16;
-    private static final int ROW = 0xFF1C222D;
-    private static final int ROW_HOVER = 0xFF232A34;
-    private static final int ROW_SELECTED = 0xFF2A303A;
+    private static final int BG = 0xFF0B0E14;
+    private static final int PANEL = 0xFF12161F;
+    private static final int PANEL_2 = 0xFF171C27;
+    private static final int ROW = 0xFF1B212D;
+    private static final int ROW_HOVER = 0xFF232B3A;
+    private static final int ROW_SELECTED = 0xFF283142;
+    private static final int LINE = 0xFF2A3342;
+    private static final int TEXT = 0xFFEFF3F8;
+    private static final int MUTED = 0xFF8B96A8;
     private static final int YELLOW = 0xFFFFC400;
-    private static final int TEXT = 0xFFF5F7FA;
-    private static final int MUTED = 0xFF9AA6B2;
-    private static final int GREEN = 0xFF6BE07A;
+    private static final int AMBER = 0xFFFF8A00;
+    private static final int GREEN = 0xFF63E07C;
+    private static final int CYAN = 0xFF35E0FF;
 
-    private static final int LIST_X = 12;
-    private static final int LIST_W = 196;
-    private static final int PANEL_X = 220;
-    private static final int PANEL_W = 220;
-    private static final int BAR_OFFSET = 112;
-    private static final int BAR_W = 96;
+    private static final int HEADER = 78;
+    private static final int PAD = 18;
+    private static final int LIST_W = 320;
+    private static final int ROW_H = 32;
+    private static final int BAR_W = 90;
+
+    private final long openedAt = System.currentTimeMillis();
+    private long lastFrame = System.nanoTime();
+    private final Map<String, Float> hover = new HashMap<>();
 
     private Category category = Category.RENDER;
     private Module selected;
     private Setting<?> dragging;
     private Module binding;
+    private int scroll;
 
     public ClickGuiScreen() {
         super(Component.literal("Chicken Client"));
     }
 
-    /** Bold, right slanted client style used for headers and module names. */
-    private void styled(GuiGraphics g, String text, int x, int y, int color) {
-        g.drawString(font, Component.literal(text).withStyle(ChatFormatting.BOLD, ChatFormatting.ITALIC)
-            .getVisualOrderText(), x, y, color);
-    }
-
     private int px() {
-        return (width - WIDTH) / 2;
+        return (width - W) / 2;
     }
 
     private int py() {
-        return (height - HEIGHT) / 2;
+        return (height - H) / 2;
     }
 
     private List<Setting<?>> visibleSettings(Module module) {
@@ -71,89 +78,182 @@ public final class ClickGuiScreen extends Screen {
         return list;
     }
 
+    private float hoverOf(String key, boolean active, float dt) {
+        float current = hover.getOrDefault(key, 0.0f);
+        float target = active ? 1.0f : 0.0f;
+        current += (target - current) * Math.min(1.0f, dt * 14.0f);
+        hover.put(key, current);
+        return current;
+    }
+
     @Override
     public void render(GuiGraphics g, int mouseX, int mouseY, float delta) {
+        long now = System.nanoTime();
+        float dt = Math.min(0.1f, (now - lastFrame) / 1_000_000_000.0f);
+        lastFrame = now;
+
+        if (!NanoVg.begin(width, height)) {
+            fallback(g);
+            return;
+        }
+
+        float open = NanoVg.easeOut((System.currentTimeMillis() - openedAt) / 240.0f);
+        float alpha = 0.15f + 0.85f * open;
         int x = px();
         int y = py();
 
-        g.fill(0, 0, width, height, 0x88000000);
-        g.fill(x - 2, y - 2, x + WIDTH + 2, y + HEIGHT + 2, 0x55FFC400);
-        g.fill(x, y, x + WIDTH, y + HEIGHT, CARD);
-        g.fillGradient(x, y, x + WIDTH, y + 3, YELLOW, 0xFFFF8A00);
+        NanoVg.rect(0, 0, width, height, NanoVg.alpha(0xFF05070B, (int) (210 * open)));
 
-        styled(g, "CHICKEN CLIENT", x + 16, y + 12, YELLOW);
-        g.drawString(font, "STANDALONE  //  v" + ChickenClient.VERSION, x + 16, y + 25, MUTED, false);
+        NanoVg.roundRect(x - 1, y - 1, W + 2, H + 2, 20, NanoVg.alpha(AMBER, (int) (40 * alpha)));
+        NanoVg.roundRect(x, y, W, H, 18, NanoVg.alpha(BG, (int) (245 * alpha)));
+        NanoVg.strokeRoundGradient(x, y, W, H, 18, 1.2f,
+            NanoVg.alpha(YELLOW, (int) (200 * alpha)), NanoVg.alpha(0xFF7A3CFF, (int) (120 * alpha)));
 
-        int tx = x + PANEL_X;
-        for (Category c : Category.values()) {
-            int tw = font.width(c.title()) + 14;
-            boolean active = c == category;
-            boolean hover = inside(mouseX, mouseY, tx, y + 9, tw, 18);
-            g.fill(tx, y + 9, tx + tw, y + 27, active ? YELLOW : (hover ? ROW_HOVER : ROW));
-            styled(g, c.title().toUpperCase(java.util.Locale.ROOT), tx + 7, y + 14, active ? 0xFF17130A : TEXT);
-            tx += tw + 6;
-        }
+        drawHeader(x, y, mouseX, mouseY, alpha, dt, open);
+        drawModules(x, y, mouseX, mouseY, alpha, dt);
+        drawSettings(x, y, mouseX, mouseY, alpha, dt);
 
-        int ry = y + 48;
-        for (Module module : ChickenClient.modules().byCategory(category)) {
-            boolean hover = inside(mouseX, mouseY, x + LIST_X, ry, LIST_W, 20);
-            boolean sel = module == selected;
-            g.fill(x + LIST_X, ry, x + LIST_X + LIST_W, ry + 20, sel ? ROW_SELECTED : (hover ? ROW_HOVER : CARD_DARK));
-            g.fill(x + LIST_X + 8, ry + 8, x + LIST_X + 12, ry + 12, module.isEnabled() ? GREEN : 0xFF5A6572);
-            styled(g, module.name(), x + LIST_X + 18, ry + 6, module.isEnabled() ? TEXT : 0xFFAEB8C2);
-            String bind = ChickenClient.keyName(module.getBind());
-            g.drawString(font, bind, x + LIST_X + LIST_W - font.width(bind) - 8, ry + 6, MUTED, false);
-            ry += 22;
-        }
+        NanoVg.text("R-SHIFT / ESC close     left click toggles     right click settings",
+            x + PAD, y + H - 22, 11, NanoVg.alpha(MUTED, (int) (200 * alpha)));
 
-        if (selected != null) renderSettings(g, x, y, mouseX, mouseY);
-
-        g.drawString(font, "R-SHIFT / ESC close   -   click: toggle   -   right click: settings",
-            x + 16, y + HEIGHT - 16, MUTED, false);
+        NanoVg.end();
     }
 
-    private void renderSettings(GuiGraphics g, int x, int y, int mouseX, int mouseY) {
-        int sx = x + PANEL_X;
-        int sy = y + 48;
+    private void drawHeader(int x, int y, int mouseX, int mouseY, float alpha, float dt, float open) {
+        long time = System.currentTimeMillis();
+        float pulse = 0.55f + 0.45f * (float) Math.sin(time / 620.0);
 
-        g.fill(sx, sy, sx + PANEL_W, sy + HEIGHT - 78, CARD_DARK);
-        g.fill(sx, sy, sx + PANEL_W, sy + 2, 0xFF3A2A00);
+        NanoVg.roundRect(x + 1, y + 1, W - 2, HEADER, 18, NanoVg.alpha(PANEL, (int) (250 * alpha)));
+        NanoVg.rect(x + 1, y + HEADER - 1, W - 2, 1, NanoVg.alpha(LINE, (int) (200 * alpha)));
 
-        styled(g, selected.name(), sx + 10, sy + 10, YELLOW);
-        String desc = selected.description();
-        if (font.width(desc) > PANEL_W - 20) desc = font.plainSubstrByWidth(desc, PANEL_W - 20) + "...";
-        g.drawString(font, desc, sx + 10, sy + 24, MUTED, false);
+        NanoVg.logo(x + PAD + 20, y + HEADER / 2f - 2, 34 * (0.9f + 0.1f * open), alpha);
+        NanoVg.text("CHICKEN CLIENT", x + PAD + 50, y + 20, 22, NanoVg.alpha(TEXT, (int) (255 * alpha)));
+        NanoVg.text("v" + ChickenClient.VERSION + "   //   standalone build", x + PAD + 50, y + 48, 12,
+            NanoVg.alpha(MUTED, (int) (235 * alpha)));
 
-        int rowY = sy + 42;
-        boolean bindHover = inside(mouseX, mouseY, sx + 6, rowY, PANEL_W - 12, 20);
-        g.fill(sx + 6, rowY, sx + PANEL_W - 6, rowY + 20, bindHover ? ROW_HOVER : ROW);
-        g.drawString(font, "keybind", sx + 14, rowY + 6, TEXT, false);
-        String bindText = binding == selected ? "PRESS A KEY" : ChickenClient.keyName(selected.getBind());
-        g.drawString(font, bindText, sx + PANEL_W - 14 - font.width(bindText), rowY + 6, binding == selected ? YELLOW : MUTED, false);
+        float tx = x + PAD + 50 + NanoVg.textWidth("CHICKEN CLIENT", 22) + 26;
+        for (Category c : Category.values()) {
+            String label = c.title().toUpperCase(java.util.Locale.ROOT);
+            float tw = NanoVg.textWidth(label, 11) + 26;
+            boolean active = c == category;
+            float hoverT = hoverOf("tab:" + c.name(), inside(mouseX, mouseY, (int) tx, y + 26, (int) tw, 26), dt);
 
-        rowY += 24;
-        for (Setting<?> setting : visibleSettings(selected)) {
-            boolean hover = inside(mouseX, mouseY, sx + 6, rowY, PANEL_W - 12, 20);
-            g.fill(sx + 6, rowY, sx + PANEL_W - 6, rowY + 20, hover ? ROW_HOVER : CARD);
-            g.drawString(font, setting.name(), sx + 14, rowY + 6, TEXT, false);
+            int fill = active ? NanoVg.alpha(YELLOW, (int) (235 * alpha))
+                : NanoVg.alpha(NanoVg.mix(ROW, ROW_HOVER, hoverT), (int) (220 * alpha));
+            NanoVg.roundRect(tx, y + 26, tw, 26, 13, fill);
+            int textColor = active ? 0xFF191104 : NanoVg.alpha(TEXT, (int) (235 * alpha));
+            NanoVg.text(label, tx + 13, y + 33, 11, textColor);
+            tx += tw + 8;
+        }
+    }
 
-            if (setting instanceof BoolSetting bool) {
-                String value = bool.get() ? "ON" : "OFF";
-                g.drawString(font, value, sx + PANEL_W - 14 - font.width(value), rowY + 6,
-                    bool.get() ? GREEN : MUTED, false);
-            } else if (setting instanceof DoubleSetting slider) {
-                int bx = sx + BAR_OFFSET;
-                int by = rowY + 7;
-                g.fill(bx, by, bx + BAR_W, by + 6, 0xFF2A303A);
-                g.fill(bx, by, bx + (int) (BAR_W * slider.fraction()), by + 6, YELLOW);
-                String value = slider.valueText();
-                g.drawString(font, value, sx + PANEL_W - 14 - font.width(value), rowY + 6, TEXT, false);
-            } else {
-                String value = setting.valueText();
-                g.drawString(font, value, sx + PANEL_W - 14 - font.width(value), rowY + 6, MUTED, false);
+    private void drawModules(int x, int y, int mouseX, int mouseY, float alpha, float dt) {
+        int listX = x + PAD;
+        int listY = y + HEADER + PAD - 4;
+        int listH = H - HEADER - PAD * 2;
+
+        NanoVg.roundRect(listX, listY, LIST_W, listH, 14, NanoVg.alpha(PANEL_2, (int) (245 * alpha)));
+        NanoVg.text(category.title().toUpperCase(java.util.Locale.ROOT) + " MODULES", listX + 14, listY + 12, 10,
+            NanoVg.alpha(MUTED, (int) (200 * alpha)));
+        NanoVg.line(listX + 14, listY + 28, listX + LIST_W - 14, listY + 28, 1, NanoVg.alpha(LINE, (int) (150 * alpha)));
+
+        List<Module> modules = ChickenClient.modules().byCategory(category);
+        int rowY = listY + 36 - scroll;
+
+        for (Module module : modules) {
+            boolean hovered = inside(mouseX, mouseY, listX + 8, rowY, LIST_W - 16, ROW_H);
+            float hoverT = hoverOf("row:" + module.name(), hovered, dt);
+            boolean selectedRow = module == selected;
+
+            int base = selectedRow ? ROW_SELECTED : NanoVg.mix(ROW, ROW_HOVER, hoverT);
+            NanoVg.roundRect(listX + 8, rowY, LIST_W - 16, ROW_H, 10, NanoVg.alpha(base, (int) (230 * alpha)));
+
+            if (module.isEnabled()) {
+                NanoVg.roundRect(listX + 8, rowY + 7, 3, ROW_H - 14, 2, NanoVg.alpha(YELLOW, (int) (240 * alpha)));
             }
 
-            rowY += 22;
+            NanoVg.circle(listX + 26, rowY + ROW_H / 2f, 4.5f,
+                module.isEnabled() ? NanoVg.alpha(GREEN, (int) (240 * alpha)) : NanoVg.alpha(0xFF556072, (int) (180 * alpha)));
+            NanoVg.text(module.name(), listX + 40, rowY + 10, 14, NanoVg.alpha(module.isEnabled() ? TEXT : MUTED, (int) (245 * alpha)));
+
+            String bind = ChickenClient.keyName(module.getBind());
+            NanoVg.text(bind, listX + LIST_W - 20 - NanoVg.textWidth(bind, 10), rowY + 12, 10,
+                NanoVg.alpha(module.getBind() > 0 ? YELLOW : MUTED, (int) (200 * alpha)));
+
+            rowY += ROW_H + 4;
+        }
+    }
+
+    private void drawSettings(int x, int y, int mouseX, int mouseY, float alpha, float dt) {
+        int sx = x + PAD + LIST_W + 14;
+        int sw = W - (LIST_W + PAD * 3 + 14);
+        int sy = y + HEADER + PAD - 4;
+
+        NanoVg.roundRect(sx, sy, sw, H - HEADER - PAD * 2, 14, NanoVg.alpha(PANEL_2, (int) (245 * alpha)));
+
+        if (selected == null) {
+            NanoVg.text("select a module", sx + sw / 2f - NanoVg.textWidth("select a module", 12) / 2f,
+                sy + (H - HEADER) / 2f - 20, 12, NanoVg.alpha(MUTED, (int) (190 * alpha)));
+            return;
+        }
+
+        NanoVg.text(selected.name(), sx + 14, sy + 12, 16, NanoVg.alpha(YELLOW, (int) (245 * alpha)));
+        String desc = selected.description();
+        while (NanoVg.textWidth(desc, 10) > sw - 28 && desc.length() > 4) desc = desc.substring(0, desc.length() - 2);
+        NanoVg.text(desc, sx + 14, sy + 34, 10, NanoVg.alpha(MUTED, (int) (215 * alpha)));
+
+        int rowY = sy + 56;
+        boolean bindHover = inside(mouseX, mouseY, sx + 10, rowY, sw - 20, 26);
+        float bindT = hoverOf("bind", bindHover, dt);
+        NanoVg.roundRect(sx + 10, rowY, sw - 20, 26, 8, NanoVg.alpha(NanoVg.mix(ROW, ROW_HOVER, bindT), (int) (230 * alpha)));
+        NanoVg.text("keybind", sx + 22, rowY + 8, 12, NanoVg.alpha(TEXT, (int) (235 * alpha)));
+        String bindText = binding == selected ? "press a key" : ChickenClient.keyName(selected.getBind());
+        NanoVg.text(bindText.toUpperCase(java.util.Locale.ROOT), sx + sw - 24 - NanoVg.textWidth(bindText.toUpperCase(java.util.Locale.ROOT), 11),
+            rowY + 9, 11, NanoVg.alpha(binding == selected ? YELLOW : MUTED, (int) (235 * alpha)));
+
+        rowY += 32;
+        for (Setting<?> setting : visibleSettings(selected)) {
+            boolean hovered = inside(mouseX, mouseY, sx + 10, rowY, sw - 20, 26);
+            float t = hoverOf("set:" + setting.name(), hovered, dt);
+            NanoVg.roundRect(sx + 10, rowY, sw - 20, 26, 8, NanoVg.alpha(NanoVg.mix(PANEL, ROW, t), (int) (225 * alpha)));
+            NanoVg.text(setting.name(), sx + 22, rowY + 8, 12, NanoVg.alpha(TEXT, (int) (235 * alpha)));
+
+            if (setting instanceof BoolSetting bool) {
+                int pillW = 34;
+                int pillX = sx + sw - 24 - pillW;
+                NanoVg.roundRect(pillX, rowY + 6, pillW, 14, 7,
+                    NanoVg.alpha(bool.get() ? GREEN : 0xFF39424F, (int) (235 * alpha)));
+                NanoVg.circle(bool.get() ? pillX + pillW - 7 : pillX + 7, rowY + 13, 5,
+                    NanoVg.alpha(0xFF0B0E14, (int) (245 * alpha)));
+            } else if (setting instanceof DoubleSetting slider) {
+                int bx = sx + sw - 24 - BAR_W;
+                int by = rowY + 11;
+                NanoVg.roundRect(bx, by, BAR_W, 5, 2.5f, NanoVg.alpha(0xFF2A3342, (int) (230 * alpha)));
+                float fraction = (float) slider.fraction();
+                NanoVg.roundRect(bx, by, BAR_W * fraction, 5, 2.5f, NanoVg.alpha(YELLOW, (int) (240 * alpha)));
+                NanoVg.circle(bx + BAR_W * fraction, by + 2.5f, 4.5f, NanoVg.alpha(0xFFFFFFFF, (int) (245 * alpha)));
+                String value = slider.valueText();
+                NanoVg.text(value, bx - 8 - NanoVg.textWidth(value, 10), rowY + 8, 10, NanoVg.alpha(MUTED, (int) (220 * alpha)));
+            } else {
+                String value = setting.valueText();
+                NanoVg.text(value, sx + sw - 24 - NanoVg.textWidth(value, 10), rowY + 8, 10, NanoVg.alpha(MUTED, (int) (220 * alpha)));
+            }
+
+            rowY += 32;
+            if (rowY > sy + H - HEADER - PAD * 2 - 34) break;
+        }
+    }
+
+    /** Plain fallback so the client is never unusable if NanoVG cannot start. */
+    private void fallback(GuiGraphics g) {
+        int x = px();
+        int y = py();
+        g.fill(x, y, x + W, y + H, 0xF00B0E14);
+        g.drawString(font, "CHICKEN CLIENT", x + 18, y + 18, 0xFFFFC400, false);
+        int rowY = y + 48;
+        for (Module module : ChickenClient.modules().byCategory(category)) {
+            g.drawString(font, (module.isEnabled() ? "[x] " : "[ ] ") + module.name(), x + 20, rowY, 0xFFFFFFFF, false);
+            rowY += 18;
         }
     }
 
@@ -164,20 +264,24 @@ public final class ClickGuiScreen extends Screen {
         double mx = event.x();
         double my = event.y();
 
-        int tx = x + PANEL_X;
+        float tx = x + PAD + 50 + NanoVg.textWidth("CHICKEN CLIENT", 22) + 26;
         for (Category c : Category.values()) {
-            int tw = font.width(c.title()) + 14;
-            if (inside(mx, my, tx, y + 9, tw, 18)) {
+            String label = c.title().toUpperCase(java.util.Locale.ROOT);
+            float tw = NanoVg.textWidth(label, 11) + 26;
+            if (inside(mx, my, (int) tx, y + 26, (int) tw, 26)) {
                 category = c;
                 selected = null;
+                scroll = 0;
                 return true;
             }
-            tx += tw + 6;
+            tx += tw + 8;
         }
 
-        int ry = y + 48;
+        int listX = x + PAD;
+        int listY = y + HEADER + PAD - 4;
+        int rowY = listY + 36 - scroll;
         for (Module module : ChickenClient.modules().byCategory(category)) {
-            if (inside(mx, my, x + LIST_X, ry, LIST_W, 20)) {
+            if (inside(mx, my, listX + 8, rowY, LIST_W - 16, ROW_H)) {
                 if (event.button() == 0) {
                     module.toggle();
                     ChickenClient.config().save();
@@ -185,32 +289,33 @@ public final class ClickGuiScreen extends Screen {
                 selected = module;
                 return true;
             }
-            ry += 22;
+            rowY += ROW_H + 4;
         }
 
-        if (selected == null) return super.mouseClicked(event, doubleClick);
+        if (selected != null) {
+            int sx = x + PAD + LIST_W + 14;
+            int sw = W - (LIST_W + PAD * 3 + 14);
+            int sy = y + HEADER + PAD - 4;
 
-        int sx = x + PANEL_X;
-        int sy = y + 48;
-
-        if (inside(mx, my, sx + 6, sy + 42, PANEL_W - 12, 20)) {
-            binding = selected;
-            return true;
-        }
-
-        int rowY = sy + 66;
-        for (Setting<?> setting : visibleSettings(selected)) {
-            if (inside(mx, my, sx + 6, rowY, PANEL_W - 12, 20)) {
-                if (setting instanceof BoolSetting bool) {
-                    bool.set(!bool.get());
-                    ChickenClient.config().save();
-                } else if (setting instanceof DoubleSetting slider) {
-                    dragging = slider;
-                    applyDrag(slider, mx, sx);
-                }
+            if (inside(mx, my, sx + 10, sy + 56, sw - 20, 26)) {
+                binding = selected;
                 return true;
             }
-            rowY += 22;
+
+            int settingY = sy + 88;
+            for (Setting<?> setting : visibleSettings(selected)) {
+                if (inside(mx, my, sx + 10, settingY, sw - 20, 26)) {
+                    if (setting instanceof BoolSetting bool) {
+                        bool.set(!bool.get());
+                        ChickenClient.config().save();
+                    } else if (setting instanceof DoubleSetting slider) {
+                        dragging = slider;
+                        applyDrag(slider, mx, sx, sw);
+                    }
+                    return true;
+                }
+                settingY += 32;
+            }
         }
 
         return super.mouseClicked(event, doubleClick);
@@ -219,7 +324,7 @@ public final class ClickGuiScreen extends Screen {
     @Override
     public boolean mouseDragged(MouseButtonEvent event, double dragX, double dragY) {
         if (dragging instanceof DoubleSetting slider) {
-            applyDrag(slider, event.x(), px());
+            applyDrag(slider, event.x(), px() + PAD + LIST_W + 14, W - (LIST_W + PAD * 3 + 14));
             return true;
         }
         return super.mouseDragged(event, dragX, dragY);
@@ -235,8 +340,16 @@ public final class ClickGuiScreen extends Screen {
         return super.mouseReleased(event);
     }
 
-    private void applyDrag(DoubleSetting slider, double mouseX, int x) {
-        int barX = x + PANEL_X + BAR_OFFSET;
+    @Override
+    public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
+        int rows = ChickenClient.modules().byCategory(category).size();
+        int max = Math.max(0, rows * (ROW_H + 4) - 240);
+        scroll = (int) Math.max(0, Math.min(max, scroll - scrollY * 24));
+        return true;
+    }
+
+    private void applyDrag(DoubleSetting slider, double mouseX, int sx, int sw) {
+        int barX = sx + sw - 24 - BAR_W;
         slider.setFraction((mouseX - barX) / (double) BAR_W);
     }
 
