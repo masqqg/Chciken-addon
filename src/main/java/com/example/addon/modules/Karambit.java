@@ -13,8 +13,11 @@ import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
+import com.example.addon.render.TexturedRenderer;
 import net.minecraft.client.player.AbstractClientPlayer;
+import net.minecraft.client.renderer.LightTexture;
 import net.minecraft.client.renderer.SubmitNodeCollector;
+import net.minecraft.client.renderer.texture.OverlayTexture;
 import net.minecraft.client.renderer.rendertype.RenderTypes;
 import net.minecraft.world.entity.HumanoidArm;
 
@@ -277,10 +280,9 @@ public class Karambit extends Module {
                 matrices.scale(size, size, size);
 
                 float fade = 0.35f + 0.65f * (1.0f - (float) i / (ghostCount.get() + 1));
-                int ghost = rgba(accentColor.get(), fade * 0.55f);
-                float ghostTime = time + i * 0.03f;
-                queue.submitCustomGeometry(matrices, RenderTypes.debugQuads(), (pose, vc) ->
-                    buildBlade(vc, pose, ghost, ghost, false, ghostTime));
+                final float ghostAlpha = fade * 0.45f;
+                queue.submitCustomGeometry(matrices, RenderTypes.entityTranslucent(TexturedRenderer.BLADE), (pose, vc) ->
+                    buildTexturedBlade(vc, pose, ghostAlpha));
                 matrices.popPose();
             }
         }
@@ -295,6 +297,14 @@ public class Karambit extends Module {
 
         matrices.scale(size, size, size);
         final float modelArc = arc;
+
+        // Real materials: brushed steel blade and a wrapped leather grip, both
+        // drawn with the bundled textures instead of flat debug quads.
+        queue.submitCustomGeometry(matrices, RenderTypes.entityTranslucent(TexturedRenderer.BLADE), (pose, vc) ->
+            buildTexturedBlade(vc, pose, 1.0f));
+        queue.submitCustomGeometry(matrices, RenderTypes.entityTranslucent(TexturedRenderer.GRIP), (pose, vc) ->
+            buildTexturedGrip(vc, pose));
+
         queue.submitCustomGeometry(matrices, RenderTypes.debugQuads(), (pose, vc) ->
             buildModel(vc, pose, time, modelArc));
 
@@ -313,14 +323,7 @@ public class Karambit extends Module {
         buildRing(vc, pose, 0.0f, -0.665f, 0.115f, 0.068f, 0.050f, ring, accent);
         buildRing(vc, pose, 0.0f, -0.665f, 0.072f, 0.058f, 0.052f, accent, ring);
 
-        // Handle and wrapped grip ridges.
-        box(vc, pose, -0.052f, -0.590f, -0.052f, 0.052f, 0.020f, 0.052f,
-            rgba(handle, 1.0f), rgba(handle, 0.55f), rgba(handle, 0.7f));
-        for (int i = 0; i < 7; i++) {
-            float y = -0.545f + i * 0.078f;
-            box(vc, pose, -0.057f, y, 0.050f, 0.057f, y + 0.020f, 0.060f,
-                rgba(accent, 0.5f), rgba(handle, 0.34f), rgba(handle, 0.44f));
-        }
+        // The handle is drawn by buildTexturedGrip with the leather texture.
 
         // Spine inlay on the back of the handle.
         box(vc, pose, -0.020f, -0.560f, -0.058f, 0.020f, -0.030f, -0.050f,
@@ -351,7 +354,7 @@ public class Karambit extends Module {
                 rgba(glove, 0.78f), rgba(glove, 0.36f), rgba(glove, 0.48f));
         }
 
-        buildBlade(vc, pose, rgba(blade, 1.0f), rgba(edge, 1.0f), true, time);
+        // The blade is drawn by buildTexturedBlade with the steel texture.
 
         // A small animated spark at the hooked tip.
         if (glow.get()) {
@@ -443,6 +446,102 @@ public class Karambit extends Module {
             cx + radius, cy, 0.0f,
             cx, cy + radius, 0.0f,
             core);
+    }
+
+    /**
+     * The blade as texture mapped geometry: the steel gradient, brushed streaks
+     * and the hot cutting edge come from {@code karambit/blade.png}, and the
+     * quad strip follows the same hawkbill spine as the silhouette animation.
+     */
+    private void buildTexturedBlade(VertexConsumer vc, PoseStack.Pose pose, float alpha) {
+        float thickness = 0.034f;
+        float half = thickness * 0.5f;
+        int segments = SPINE.length - 1;
+
+        for (int i = 0; i < segments; i++) {
+            float[] a = SPINE[i];
+            float[] b = SPINE[i + 1];
+
+            float dx = b[0] - a[0];
+            float dy = b[1] - a[1];
+            float len = (float) Math.sqrt(dx * dx + dy * dy);
+            if (len < 0.0001f) continue;
+
+            float nx = -dy / len;
+            float ny = dx / len;
+            float aw = a[2] * 0.5f;
+            float bw = b[2] * 0.5f;
+
+            float alx = a[0] + nx * aw;
+            float aly = a[1] + ny * aw;
+            float arx = a[0] - nx * aw;
+            float ary = a[1] - ny * aw;
+            float blx = b[0] + nx * bw;
+            float bly = b[1] + ny * bw;
+            float brx = b[0] - nx * bw;
+            float bry = b[1] - ny * bw;
+
+            float v0 = i / (float) segments;
+            float v1 = (i + 1) / (float) segments;
+            float zf = half;
+            float zb = -half;
+
+            // Front: spine at u=0, bright cutting edge at u=1.
+            texQuad(vc, pose, arx, ary, zf, alx, aly, zf, blx, bly, zf, brx, bry, zf,
+                0.0f, v0, 1.0f, v0, 1.0f, v1, 0.0f, v1, alpha);
+            // Back.
+            texQuad(vc, pose, arx, ary, zb, brx, bry, zb, blx, bly, zb, alx, aly, zb,
+                0.0f, v0, 0.0f, v1, 1.0f, v1, 1.0f, v0, alpha);
+            // Blade walls.
+            texQuad(vc, pose, alx, aly, zf, alx, aly, zb, blx, bly, zb, blx, bly, zf,
+                0.95f, v0, 0.95f, v0, 0.95f, v1, 0.95f, v1, alpha);
+            texQuad(vc, pose, arx, ary, zf, brx, bry, zf, brx, bry, zb, arx, ary, zb,
+                0.06f, v0, 0.06f, v1, 0.06f, v1, 0.06f, v0, alpha);
+        }
+    }
+
+    
+    private void buildTexturedGrip(VertexConsumer vc, PoseStack.Pose pose) {
+        float x1 = -0.052f;
+        float y1 = -0.590f;
+        float z1 = -0.052f;
+        float x2 = 0.052f;
+        float y2 = 0.020f;
+        float z2 = 0.052f;
+
+        texQuad(vc, pose, x1, y1, z2, x2, y1, z2, x2, y2, z2, x1, y2, z2,
+            0.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f);
+        texQuad(vc, pose, x2, y1, z1, x1, y1, z1, x1, y2, z1, x2, y2, z1,
+            0.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f);
+        texQuad(vc, pose, x2, y1, z2, x2, y1, z1, x2, y2, z1, x2, y2, z2,
+            0.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f);
+        texQuad(vc, pose, x1, y1, z1, x1, y1, z2, x1, y2, z2, x1, y2, z1,
+            0.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f);
+        texQuad(vc, pose, x1, y2, z2, x2, y2, z2, x2, y2, z1, x1, y2, z1,
+            0.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f);
+        texQuad(vc, pose, x1, y1, z1, x2, y1, z1, x2, y1, z2, x1, y1, z2,
+            0.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f);
+    }
+
+    private static void texQuad(VertexConsumer vc, PoseStack.Pose pose,
+                                float x1, float y1, float z1, float x2, float y2, float z2,
+                                float x3, float y3, float z3, float x4, float y4, float z4,
+                                float u1, float v1, float u2, float v2,
+                                float u3, float v3, float u4, float v4, float alpha) {
+        tex(vc, pose, x1, y1, z1, u1, v1, alpha);
+        tex(vc, pose, x2, y2, z2, u2, v2, alpha);
+        tex(vc, pose, x3, y3, z3, u3, v3, alpha);
+        tex(vc, pose, x4, y4, z4, u4, v4, alpha);
+    }
+
+    private static void tex(VertexConsumer vc, PoseStack.Pose pose,
+                            float x, float y, float z, float u, float v, float alpha) {
+        vc.addVertex(pose, x, y, z)
+            .setColor(255, 255, 255, clamp((int) (alpha * 255.0f)))
+            .setUv(u, v)
+            .setLight(LightTexture.FULL_BRIGHT)
+            .setOverlay(OverlayTexture.NO_OVERLAY)
+            .setNormal(0.0f, 0.0f, 1.0f);
     }
 
     private void buildBlade(VertexConsumer vc, PoseStack.Pose pose, int frontColor, int edgeColor,
