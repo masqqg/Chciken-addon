@@ -173,6 +173,9 @@ public final class NanoHudScreen extends Screen {
         context.fill(x - 1, y - 1, x + width + 1, y + 45, color(primary, aura));
         context.fill(x, y, x + width, y + 44, 0x99151C26);
 
+        // Animated yellow wings behind the avatar.
+        drawPreviewWings(context, x, y, primary, secondary, time, animated);
+
         // Avatar: breath, head sway, blink and tiny orbiting yellow sparks.
         context.fill(x, y, x + 18, y + 18, 0xFF26303D);
         context.fill(x + 1, y + 1, x + 17, y + 17, color(primary, 55));
@@ -211,6 +214,24 @@ public final class NanoHudScreen extends Screen {
         previewBar(context, barX, y + 36, barW, 2, xp, color(accent, 220), 0xFF202B37, time, animated);
         context.drawString(font, String.format(Locale.ROOT, "%.1f", health), x + width - 25, y + 21, color(accent, 230), false);
         context.drawString(font, "HP", x + width - 25, y + 30, MUTED, false);
+    }
+
+    private void drawPreviewWings(GuiGraphics context, int x, int y,
+                                  int primary, int secondary, double time, boolean animated) {
+        context.fill(x - 5, y + 4, x + 23, y + 19, color(primary, animated ? 22 : 16));
+
+        for (int side = -1; side <= 1; side += 2) {
+            int rootX = side < 0 ? x + 2 : x + 16;
+            for (int i = 0; i < 3; i++) {
+                int tipX = rootX + side * (7 + i * 4);
+                int flap = animated ? (int) Math.round(Math.sin(time * 7.5 + i * 0.7) * 2.0) : 0;
+                int tipY = y + 6 + i * 4 + flap;
+                int left = Math.min(rootX, tipX);
+                int right = Math.max(rootX, tipX);
+                context.fill(left, tipY, right, tipY + 1, color(i == 0 ? primary : secondary, 195 - i * 35));
+                context.fill(left, tipY + 1, right, tipY + 2, color(primary, 48));
+            }
+        }
     }
 
     private void drawStats(GuiGraphics context, Minecraft mc, LocalPlayer player,

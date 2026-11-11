@@ -69,7 +69,7 @@ public final class NanoHudRenderer {
     private static final Logger LOG = LoggerFactory.getLogger("ChickenClient/NanoVG");
 
     private static final float PANEL_WIDTH = 272.0f;
-    private static final float PANEL_HEIGHT = 186.0f;
+    private static final float PANEL_HEIGHT = 208.0f;
 
     private static long vg;
     private static int font = -1;
@@ -88,6 +88,9 @@ public final class NanoHudRenderer {
     private static boolean settingsHeld;
     private static boolean scaleDownHeld;
     private static boolean scaleUpHeld;
+
+    private static final float[] FPS_HISTORY = new float[28];
+    private static int fpsIndex;
 
     private NanoHudRenderer() {
     }
@@ -246,6 +249,7 @@ public final class NanoHudRenderer {
             float scanY = 8.0f + (float) ((time * 34.0) % (PANEL_HEIGHT - 16.0));
             fillGradient(18.0f, scanY, PANEL_WIDTH - 36.0f, 1.0f, argb(primary, 0), argb(primary, 75), false);
         }
+        drawParticles(hud, time, primary, secondary);
 
         if (hud.showWatermark) {
             drawCloud(30.0f, 25.0f, 1.0f, time, hud, primary, secondary);
@@ -256,7 +260,7 @@ public final class NanoHudRenderer {
         fillGradient(16.0f, 48.0f, PANEL_WIDTH - 32.0f, 1.0f, argb(primary, 80), argb(secondary, 20), true);
 
         LocalPlayer player = mc.player;
-        if (hud.showPlayer && player != null) drawPlayerCard(mc, player, time, primary, secondary, accent);
+        if (hud.showPlayer && player != null) drawPlayerCard(mc, player, time, primary, secondary, accent, hud.animations);
         if (hud.showStats && player != null) drawStats(mc, player, time, primary, secondary);
 
         fillRound(16.0f, PANEL_HEIGHT - 15.0f, 3.0f, 3.0f, 1.5f, argb(secondary, 220));
@@ -266,11 +270,31 @@ public final class NanoHudRenderer {
     }
 
     private static void drawPlayerCard(Minecraft mc, LocalPlayer player, double time,
-                                       int primary, int secondary, int accent) {
+                                       int primary, int secondary, int accent, boolean animations) {
         float top = 58.0f;
+
+        float health = Math.max(0.0f, player.getHealth());
+        float maxHealth = Math.max(1.0f, player.getMaxHealth());
+        float healthRatio = Math.min(1.0f, health / maxHealth);
+        boolean danger = healthRatio < 0.35f;
+
+        drawPlayerWings(time, animations, primary, secondary);
 
         fillRound(18.0f, top, 44.0f, 44.0f, 13.0f, argb(30, 42, 58, 220));
         fillRoundGradient(19.0f, top + 1.0f, 42.0f, 42.0f, 12.0f, argb(primary, 70), argb(secondary, 45), true);
+
+        if (animations) {
+            for (int i = 0; i < 10; i++) {
+                double angle = time * 1.35 + i * Math.PI / 5.0;
+                float auraX = 40.0f + (float) Math.cos(angle) * 14.0f;
+                float auraY = top + 18.0f + (float) Math.sin(angle) * 14.0f;
+                nvgBeginPath(vg);
+                nvgCircle(vg, auraX, auraY, 1.1f);
+                setColor(COLOR_A, argb(i % 2 == 0 ? primary : secondary, 115));
+                nvgFillColor(vg, COLOR_A);
+                nvgFill(vg);
+            }
+        }
 
         nvgBeginPath(vg);
         nvgCircle(vg, 40.0f, top + 18.0f, 7.8f);
@@ -282,15 +306,22 @@ public final class NanoHudRenderer {
         text(player.getName().getString(), 72.0f, top + 2.0f, 12.2f, argb(242, 248, 255, 255));
         text("LOCAL PLAYER", 72.0f, top + 17.0f, 7.0f, argb(140, 170, 195, 190));
 
-        float health = Math.max(0.0f, player.getHealth());
-        float maxHealth = Math.max(1.0f, player.getMaxHealth());
-        float healthRatio = Math.min(1.0f, health / maxHealth);
-        bar(72.0f, top + 29.0f, 142.0f, 6.0f, healthRatio, argb(255, 61, 90, 235), argb(26, 34, 52, 220), time);
+        int healthAlpha = danger
+            ? 175 + (int) (60 * (0.5 + 0.5 * Math.sin(time * 7.0)))
+            : 235;
+        int healthColor = danger ? argb(255, 70, 90, healthAlpha) : argb(primary, healthAlpha);
+        bar(72.0f, top + 29.0f, 142.0f, 6.0f, healthRatio, healthColor, argb(26, 34, 52, 220), time);
         bar(72.0f, top + 39.0f, 142.0f, 4.5f, Math.min(1.0f, player.getArmorValue() / 20.0f), argb(primary, 220), argb(20, 28, 40, 210), time);
         bar(72.0f, top + 47.0f, 142.0f, 3.5f, player.experienceProgress, argb(accent, 220), argb(20, 28, 40, 210), time);
 
         text(String.format(Locale.ROOT, "%.1f / %.0f", health, maxHealth), 218.0f, top + 28.0f, 6.7f, argb(230, 240, 250, 205));
         text(String.format(Locale.ROOT, "ARMOR %d", player.getArmorValue()), 218.0f, top + 39.0f, 6.3f, argb(primary, 205));
+        if (danger) {
+            text("LOW HP", 218.0f, top + 48.0f, 6.0f, argb(255, 105, 125, 210));
+        }
+        else {
+            text(String.format(Locale.ROOT, "LVL %d", player.experienceLevel), 218.0f, top + 48.0f, 6.0f, argb(primary, 190));
+        }
     }
 
     private static void drawStats(Minecraft mc, LocalPlayer player, double time, int primary, int secondary) {
@@ -305,9 +336,11 @@ public final class NanoHudRenderer {
         }
 
         int fps = mc.getFps();
+        FPS_HISTORY[fpsIndex] = fps;
+        fpsIndex = (fpsIndex + 1) % FPS_HISTORY.length;
+
         double speed = Math.sqrt(player.getDeltaMovement().x * player.getDeltaMovement().x
             + player.getDeltaMovement().z * player.getDeltaMovement().z) * 20.0;
-        int modules = 0;
 
         stat("PING", ping < 0 ? "--" : ping + "ms", left, top);
         stat("FPS", Integer.toString(fps), left + col, top);
@@ -321,13 +354,80 @@ public final class NanoHudRenderer {
         text(String.format(Locale.ROOT, "DIM  %s", player.level().dimension().toString()),
             18.0f, top + 45.0f, 6.4f, argb(135, 160, 185, 165));
 
-        float baseX = PANEL_WIDTH - 42.0f;
-        float baseY = top + 38.0f;
-        float flap = (float) Math.sin(time * 3.2) * 2.0f;
-        line(baseX - 12.0f, baseY, baseX - 2.0f, baseY - 9.0f - flap, 1.3f, argb(secondary, 190));
-        line(baseX - 8.0f, baseY + 2.0f, baseX + 1.0f, baseY - 5.0f - flap, 1.0f, argb(primary, 150));
-        line(baseX + 12.0f, baseY, baseX + 2.0f, baseY - 9.0f - flap, 1.3f, argb(secondary, 190));
-        line(baseX + 8.0f, baseY + 2.0f, baseX - 1.0f, baseY - 5.0f - flap, 1.0f, argb(primary, 150));
+        drawFpsGraph(primary, secondary, top);
+    }
+
+    private static void drawParticles(NanoHudConfig hud, double time, int primary, int secondary) {
+        if (!hud.animations) return;
+
+        for (int i = 0; i < 14; i++) {
+            double fall = 5.0 + (i % 5) * 3.0;
+            float px = 18.0f + ((i * 53) % (int) (PANEL_WIDTH - 36.0f));
+            float py = (float) (PANEL_HEIGHT - 12.0 - ((time * fall + i * 23.0) % (PANEL_HEIGHT - 24.0)));
+            float radius = 0.8f + (i % 3) * 0.4f;
+
+            nvgBeginPath(vg);
+            nvgCircle(vg, px, py, radius);
+            setColor(COLOR_A, argb(i % 2 == 0 ? primary : secondary, 35 + (i % 4) * 16));
+            nvgFillColor(vg, COLOR_A);
+            nvgFill(vg);
+        }
+    }
+
+    private static void drawPlayerWings(double time, boolean animations, int primary, int secondary) {
+        float top = 58.0f;
+        float flap = animations ? (float) Math.sin(time * 6.5) * 2.4f : 0.0f;
+
+        for (int side = -1; side <= 1; side += 2) {
+            for (int i = 0; i < 3; i++) {
+                float rootX = 40.0f + side * 10.0f;
+                float rootY = top + 19.0f;
+                float tipX = 40.0f + side * (22.0f + i * 6.0f);
+                float tipY = top + 9.0f + i * 5.0f + flap * (1.0f + i * 0.35f);
+
+                nvgBeginPath(vg);
+                nvgMoveTo(vg, rootX, rootY - 2.0f);
+                nvgLineTo(vg, tipX, tipY);
+                nvgLineTo(vg, rootX, rootY + 2.0f);
+                setColor(COLOR_A, argb(i == 0 ? primary : secondary, 55 - i * 10));
+                nvgFillColor(vg, COLOR_A);
+                nvgFill(vg);
+
+                line(rootX, rootY, tipX, tipY, 1.6f - i * 0.3f,
+                    argb(i == 0 ? primary : secondary, 200 - i * 35));
+            }
+        }
+    }
+
+    private static void drawFpsGraph(int primary, int secondary, float top) {
+        float gx = 150.0f;
+        float gy = top + 30.0f;
+        float gw = 104.0f;
+        float gh = 26.0f;
+
+        fillRound(gx, gy, gw, gh, 4.0f, argb(0, 0, 0, 120));
+        setColor(COLOR_A, argb(primary, 20));
+        nvgBeginPath(vg);
+        nvgRoundedRect(vg, gx, gy, gw, gh, 4.0f);
+        nvgFillColor(vg, COLOR_A);
+        nvgFill(vg);
+
+        text("FPS GRAPH", gx + 3.0f, gy - 7.0f, 5.6f, argb(140, 170, 200, 175));
+
+        float previousX = 0.0f;
+        float previousY = 0.0f;
+        for (int i = 0; i < FPS_HISTORY.length; i++) {
+            float value = FPS_HISTORY[(fpsIndex + i) % FPS_HISTORY.length];
+            float x = gx + 2.0f + (i / (float) (FPS_HISTORY.length - 1)) * (gw - 4.0f);
+            float y = gy + gh - 2.0f - Math.min(1.0f, value / 240.0f) * (gh - 4.0f);
+
+            if (i > 0) {
+                line(previousX, previousY, x, y, 1.1f,
+                    argb(i > FPS_HISTORY.length / 2 ? primary : secondary, 175));
+            }
+            previousX = x;
+            previousY = y;
+        }
     }
 
     private static void stat(String label, String value, float x, float y) {

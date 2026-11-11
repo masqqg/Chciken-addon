@@ -134,7 +134,9 @@ public class RedWings extends Module {
         double baseY = player.getY() + 1.18 * s;
         double baseZ = player.getZ() - forwardZ * 0.17;
 
-        double flap = Math.sin(time * 3.2 * speed) * 0.34 + 0.18;
+        double flap = Math.sin(time * 4.1 * speed) * 0.42
+            + Math.sin(time * 8.3 * speed) * 0.07
+            + 0.18;
 
         drawWing(event, baseX, baseY, baseZ, rightX, rightZ, forwardX, forwardZ, -1, flap, s, time, speed);
         drawWing(event, baseX, baseY, baseZ, rightX, rightZ, forwardX, forwardZ, 1, flap, s, time, speed);
@@ -189,6 +191,15 @@ public class RedWings extends Module {
             // A bright leading rib along each feather.
             event.renderer.line(rootX, rootY, rootZ, tipX, tipY, tipZ,
                 withAlpha(mix(primary, Color.WHITE, 0.35f), 120));
+
+            // A soft trailing ribbon from the wing tip.
+            if (glow.get()) {
+                event.renderer.line(tipX, tipY, tipZ,
+                    tipX - forwardX * (0.18 + t * 0.22) * s,
+                    tipY - 0.07 * s,
+                    tipZ - forwardZ * (0.18 + t * 0.22) * s,
+                    withAlpha(secondary, 55 - (int) (t * 20)));
+            }
 
             if (embers.get()) {
                 drawEmber(event, tipX, tipY, tipZ, t, time, speed, primary, secondary);

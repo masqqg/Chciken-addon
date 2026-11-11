@@ -54,6 +54,27 @@ public class CosmicSky extends Module {
         .build()
     );
 
+    private final Setting<Boolean> nebula = sgGeneral.add(new BoolSetting.Builder()
+        .name("nebula")
+        .description("Draw soft drifting nebula clouds.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Boolean> comets = sgGeneral.add(new BoolSetting.Builder()
+        .name("comets")
+        .description("Draw long-tailed comets across the sky.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Boolean> moons = sgGeneral.add(new BoolSetting.Builder()
+        .name("moons")
+        .description("Draw small moons orbiting the planets.")
+        .defaultValue(true)
+        .build()
+    );
+
     private final Setting<Double> distance = sgLook.add(new DoubleSetting.Builder()
         .name("distance")
         .description("Sky distance from the player.")
@@ -129,8 +150,10 @@ public class CosmicSky extends Module {
         Renderer3D renderer = event.depthRenderer != null ? event.depthRenderer : event.renderer;
 
         if (stars.get()) drawStars(renderer, eye, dist, time, spd);
+        if (nebula.get()) drawNebula(renderer, eye, dist, time, spd, s);
         if (aurora.get()) drawAurora(renderer, eye, dist, time, spd, s);
         if (planets.get()) drawPlanets(renderer, eye, dist, time, spd, s);
+        if (comets.get()) drawComets(renderer, eye, dist, time, spd, s);
         if (shootingStars.get()) drawShootingStars(renderer, eye, dist, time, spd);
     }
 
@@ -186,6 +209,64 @@ public class CosmicSky extends Module {
                     renderer.line(p0.x, p0.y, p0.z, p1.x, p1.y, p1.z, ringColor);
                 }
             }
+
+            if (moons.get()) {
+                double orbit = time * 0.35 * speed + phase * 2.0;
+                Vec3 moon = center.add(right.scale(Math.cos(orbit) * radius * 2.15))
+                    .add(up.scale(Math.sin(orbit) * radius * 1.25));
+                drawDisc(renderer, moon, right, up, radius * 0.22,
+                    withAlpha(Color.WHITE, 225), withAlpha(b, 150), 14);
+            }
+        }
+    }
+
+    private void drawNebula(Renderer3D renderer, Vec3 eye, double dist, double time, double speed, double scale) {
+        Color a = primary.get();
+        Color b = secondary.get();
+
+        for (int patch = 0; patch < 3; patch++) {
+            double angle = Math.PI * 0.35 + patch * 0.95;
+            Vec3 dir = new Vec3(Math.cos(angle), 0.18 + patch * 0.16, Math.sin(angle)).normalize();
+            Vec3 center = eye.add(dir.scale(dist * 0.88));
+            Vec3 right = perpendicular(dir);
+            Vec3 up = right.cross(dir).normalize();
+            double radius = (13.0 + patch * 5.0) * scale;
+
+            for (int layer = 0; layer < 6; layer++) {
+                double drift = time * 0.04 * speed + layer * 0.45 + patch * 1.3;
+                Vec3 cloud = center
+                    .add(right.scale(Math.cos(drift) * layer * 0.7))
+                    .add(up.scale(Math.sin(drift) * layer * 0.55));
+                double layerRadius = radius * (1.0 - layer * 0.11);
+                Color color = withAlpha(mix(a, b, (patch + layer) / 9.0f), 10 + layer * 3);
+                drawDisc(renderer, cloud, right, up, layerRadius, color, withAlpha(color, 4), 14);
+            }
+        }
+    }
+
+    private void drawComets(Renderer3D renderer, Vec3 eye, double dist, double time, double speed, double scale) {
+        for (int i = 0; i < 3; i++) {
+            double cycle = (time * (0.055 + i * 0.018) * speed + i * 0.41) % 1.0;
+            double yaw = -Math.PI * 0.7 + i * 1.75 + cycle * 2.8;
+            double pitch = 0.72 + i * 0.22;
+            Vec3 dir = new Vec3(Math.cos(yaw) * Math.cos(pitch), Math.sin(pitch), Math.sin(yaw) * Math.cos(pitch));
+            Vec3 start = eye.add(dir.scale(dist));
+            Vec3 direction = new Vec3(-0.5 - i * 0.15, -0.12, 0.68).normalize();
+            double length = (12.0 + i * 5.0) * scale;
+
+            for (int segment = 0; segment < 8; segment++) {
+                double t0 = segment / 8.0;
+                double t1 = (segment + 1) / 8.0;
+                Vec3 p0 = start.add(direction.scale(length * t0));
+                Vec3 p1 = start.add(direction.scale(length * t1));
+                Color color = withAlpha(mix(primary.get(), Color.WHITE, (float) (1.0 - t0)),
+                    (int) (185 * (1.0 - t0)));
+                renderer.line(p0.x, p0.y, p0.z, p1.x, p1.y, p1.z, color);
+            }
+
+            Vec3 head = start.add(direction.scale(length));
+            drawDisc(renderer, head, perpendicular(dir), perpendicular(dir).cross(dir).normalize(),
+                0.55 * scale, withAlpha(Color.WHITE, 235), withAlpha(secondary.get(), 170), 10);
         }
     }
 
@@ -234,7 +315,7 @@ public class CosmicSky extends Module {
             Vec3 center = eye.add(dir.scale(dist));
             Vec3 right = perpendicular(dir);
             Vec3 up = right.cross(dir).normalize();
-            Color color = withAlpha(mix(Color.WHITE, primary.get(), (i % 5) / 5.0f), (int) (185 * twinkle));
+            Color color = withAlpha(mix(mix(Color.WHITE, primary.get(), (i % 5) / 5.0f), secondary.get(), (i % 3) / 6.0f), (int) (185 * twinkle));
 
             renderer.quad(
                 center.x - right.x * size - up.x * size, center.y - right.y * size - up.y * size, center.z - right.z * size - up.z * size,
@@ -266,7 +347,10 @@ public class CosmicSky extends Module {
     }
 
     private static void drawDisc(Renderer3D renderer, Vec3 center, Vec3 right, Vec3 up, double radius, Color a, Color b) {
-        int segments = 28;
+        drawDisc(renderer, center, right, up, radius, a, b, 28);
+    }
+
+    private static void drawDisc(Renderer3D renderer, Vec3 center, Vec3 right, Vec3 up, double radius, Color a, Color b, int segments) {
         for (int i = 0; i < segments; i++) {
             double angle0 = Math.PI * 2.0 * i / segments;
             double angle1 = Math.PI * 2.0 * (i + 1) / segments;
