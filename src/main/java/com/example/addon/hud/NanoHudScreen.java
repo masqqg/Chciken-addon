@@ -55,11 +55,11 @@ public final class NanoHudScreen extends Screen {
         context.fillGradient(x, y, x + PANEL_WIDTH, y + 3, YELLOW, AMBER);
         context.fill(x + 1, y + 3, x + PANEL_WIDTH - 1, y + 5, 0xFF3A2A00);
 
-        context.drawString(font, "CHICKEN CLIENT", x + 18, y + 16, YELLOW, false);
-        context.drawString(font, "HUD SETTINGS  //  STANDALONE NANO HUD", x + 18, y + 28, MUTED, false);
+        UiText.draw(context, "CHICKEN CLIENT", x + 18, y + 16, YELLOW, false);
+        UiText.draw(context, "HUD SETTINGS  //  STANDALONE NANO HUD", x + 18, y + 28, MUTED, false);
         button(context, "MODE: " + (hud.hudMode == NanoHudConfig.HudMode.LEFT_HAND ? "LEFT HAND" : "NORMAL"),
             x + PANEL_WIDTH - 190, y + 12, 150, 18, mouseX, mouseY);
-        context.drawString(font, "P", x + PANEL_WIDTH - 28, y + 16, YELLOW_SOFT, false);
+        UiText.draw(context, "P", x + PANEL_WIDTH - 28, y + 16, YELLOW_SOFT, false);
 
         int rowY = y + 52;
         toggle(context, "Watermark", hud.showWatermark, x + 18, rowY, mouseX, mouseY);
@@ -72,16 +72,24 @@ public final class NanoHudScreen extends Screen {
         slider(context, "Wing speed", hud.wingSpeed, 0.2, 3.0, x + 18, rowY + 168, 3, mouseX, mouseY, true);
         slider(context, "Wing amplitude", hud.wingAmplitude, 0.2, 2.0, x + 18, rowY + 198, 4, mouseX, mouseY, true);
 
-        context.drawString(font, "BRAND COLOR", x + 18, rowY + 228, MUTED, false);
+        UiText.draw(context, "BRAND COLOR", x + 18, rowY + 228, MUTED, false);
         boolean yellowSelected = (hud.primary & 0xFFFFFF) == 0xFFC400;
         boolean honeySelected = (hud.primary & 0xFFFFFF) == 0xFFB300;
         preset(context, "YELLOW", x + 18, rowY + 240, mouseX, mouseY, yellowSelected);
         preset(context, "HONEY", x + 88, rowY + 240, mouseX, mouseY, honeySelected);
 
         button(context, "RESET POSITION", x + 228, rowY + 240, 126, 20, mouseX, mouseY);
+
+        button(context, "METEOR GUI", x + 18, y + PANEL_HEIGHT - 60, 118, 20, mouseX, mouseY);
+        boolean modern = hud.modernFont;
+        context.fill(x + 144, y + PANEL_HEIGHT - 60, x + 294, y + PANEL_HEIGHT - 40,
+            modern ? YELLOW : 0xFF202630);
+        UiText.drawCentered(context, "FONT: " + (modern ? "MODERN" : "VANILLA"),
+            x + 219, y + PANEL_HEIGHT - 54, modern ? 0xFF17130A : 0xFFD5DCE5);
+
         button(context, "DONE", x + 286, y + PANEL_HEIGHT - 36, 56, 20, mouseX, mouseY);
 
-        context.drawString(font, "P opens this menu.  F7 hides the HUD.  RSHIFT + drag moves it.  [ ] scales it.",
+        UiText.draw(context, "Tap HUD / GUI on the HUD for touch menus.  P opens this menu.  F7 hides the HUD.",
             x + 18, y + PANEL_HEIGHT - 15, 0xFF7F8A96, false);
 
         drawPreview(context, hud, x + PREVIEW_X, y + PREVIEW_Y, PREVIEW_WIDTH, PREVIEW_HEIGHT);
@@ -103,9 +111,9 @@ public final class NanoHudScreen extends Screen {
         context.fill(x, y, x + width, y + height, 0xFF0B1017);
         context.fill(x, y, x + width, y + 2, color(hud.primary, 220));
         context.fill(x + 1, y + 2, x + width - 1, y + 3, color(hud.secondary, 70));
-        context.drawString(font, "LIVE PREVIEW", x + 8, y + 8, YELLOW_SOFT, false);
+        UiText.draw(context, "LIVE PREVIEW", x + 8, y + 8, YELLOW_SOFT, false);
         context.fill(x + width - 14, y + 11, x + width - 8, y + 17, color(hud.primary, dotAlpha));
-        context.drawString(font, "LIVE", x + width - 42, y + 9, color(hud.primary, dotAlpha), false);
+        UiText.draw(context, "LIVE", x + width - 42, y + 9, color(hud.primary, dotAlpha), false);
 
         int mx = x + 8;
         int my = y + 26;
@@ -122,8 +130,8 @@ public final class NanoHudScreen extends Screen {
 
         if (hud.showWatermark) {
             drawCloud(context, mx + 10, contentTop + bob, hud.primary);
-            context.drawString(font, "CHICKEN", mx + 31, contentTop + 1 + bob, TEXT, false);
-            context.drawString(font, "CLIENT // NANO", mx + 31, contentTop + 11 + bob, color(hud.primary, 215), false);
+            UiText.draw(context, "CHICKEN", mx + 31, contentTop + 1 + bob, TEXT, false);
+            UiText.draw(context, "CLIENT // NANO", mx + 31, contentTop + 11 + bob, color(hud.primary, 215), false);
             contentTop += 25;
         }
 
@@ -138,7 +146,7 @@ public final class NanoHudScreen extends Screen {
         }
 
         if (!hud.showWatermark && !hud.showPlayer && !hud.showStats) {
-            context.drawCenteredString(font, "HUD HIDDEN", mx + mw / 2, my + mh / 2 - 4, color(hud.primary, 220));
+            UiText.drawCentered(context, "HUD HIDDEN", mx + mw / 2, my + mh / 2 - 4, color(hud.primary, 220));
         }
 
         if (animated) {
@@ -147,8 +155,8 @@ public final class NanoHudScreen extends Screen {
             context.fill(mx + 5, scan - 3, mx + mw - 5, scan + 4, color(hud.primary, 10));
         }
 
-        context.drawString(font, String.format(Locale.ROOT, "%.2fx", hud.scale), mx + 6, my + mh - 11, color(hud.primary, 220), false);
-        context.drawString(font, "YELLOW CORE", mx + mw - 60, my + mh - 11, MUTED, false);
+        UiText.draw(context, String.format(Locale.ROOT, "%.2fx", hud.scale), mx + 6, my + mh - 11, color(hud.primary, 220), false);
+        UiText.draw(context, "YELLOW CORE", mx + mw - 60, my + mh - 11, MUTED, false);
     }
 
     private void drawCloud(GuiGraphics context, int x, int y, int primary) {
@@ -201,13 +209,13 @@ public final class NanoHudScreen extends Screen {
             }
         }
 
-        context.drawString(font, name, x + 24, y + 1, TEXT, false);
-        int nameWidth = font.width(name);
+        UiText.draw(context, name, x + 24, y + 1, TEXT, false);
+        int nameWidth = UiText.width(name);
         int underline = animated
             ? (int) (Math.max(10, nameWidth) * (0.58 + 0.42 * (0.5 + 0.5 * Math.sin(time * 2.4))))
             : Math.max(10, nameWidth);
         context.fill(x + 24, y + 11, x + 24 + underline, y + 12, color(primary, 165));
-        context.drawString(font, "LOCAL PLAYER", x + 24, y + 14, MUTED, false);
+        UiText.draw(context, "LOCAL PLAYER", x + 24, y + 14, MUTED, false);
 
         int barX = x + 24;
         int barW = Math.max(26, width - 70);
@@ -216,8 +224,8 @@ public final class NanoHudScreen extends Screen {
         previewBar(context, barX, y + 30, barW, 3, Math.min(1.0f, armor / 20.0f), color(secondary, 225), 0xFF202B37, time, animated);
         float xp = player == null ? 0.0f : player.experienceProgress;
         previewBar(context, barX, y + 36, barW, 2, xp, color(accent, 220), 0xFF202B37, time, animated);
-        context.drawString(font, String.format(Locale.ROOT, "%.1f", health), x + width - 25, y + 21, color(accent, 230), false);
-        context.drawString(font, "HP", x + width - 25, y + 30, MUTED, false);
+        UiText.draw(context, String.format(Locale.ROOT, "%.1f", health), x + width - 25, y + 21, color(accent, 230), false);
+        UiText.draw(context, "HP", x + width - 25, y + 30, MUTED, false);
     }
 
     private void drawPreviewWings(GuiGraphics context, int x, int y,
@@ -258,15 +266,15 @@ public final class NanoHudScreen extends Screen {
         int fps = mc.getFps();
 
         context.fill(x, y, x + width, y + 1, color(primary, 45));
-        context.drawString(font, "PING", x, y + 5, MUTED, false);
-        context.drawString(font, "FPS", x + 38, y + 5, MUTED, false);
-        context.drawString(font, "SPEED", x + 68, y + 5, MUTED, false);
-        context.drawString(font, "STATUS", x + 112, y + 5, MUTED, false);
-        context.drawString(font, ping < 0 ? "--" : ping + "ms", x, y + 14, color(accent, 230), false);
-        context.drawString(font, Integer.toString(fps), x + 38, y + 14, color(primary, 235), false);
-        context.drawString(font, String.format(Locale.ROOT, "%.1f", speed), x + 68, y + 14, color(accent, 230), false);
-        context.drawString(font, "LIVE", x + 112, y + 14, color(primary, 235), false);
-        context.drawString(font, "XYZ  READY", x, y + 25, MUTED, false);
+        UiText.draw(context, "PING", x, y + 5, MUTED, false);
+        UiText.draw(context, "FPS", x + 38, y + 5, MUTED, false);
+        UiText.draw(context, "SPEED", x + 68, y + 5, MUTED, false);
+        UiText.draw(context, "STATUS", x + 112, y + 5, MUTED, false);
+        UiText.draw(context, ping < 0 ? "--" : ping + "ms", x, y + 14, color(accent, 230), false);
+        UiText.draw(context, Integer.toString(fps), x + 38, y + 14, color(primary, 235), false);
+        UiText.draw(context, String.format(Locale.ROOT, "%.1f", speed), x + 68, y + 14, color(accent, 230), false);
+        UiText.draw(context, "LIVE", x + 112, y + 14, color(primary, 235), false);
+        UiText.draw(context, "XYZ  READY", x, y + 25, MUTED, false);
     }
 
     private void previewBar(GuiGraphics context, int x, int y, int width, int height,
@@ -284,7 +292,7 @@ public final class NanoHudScreen extends Screen {
 
     private void toggle(GuiGraphics context, String label, boolean value, int x, int y, int mouseX, int mouseY) {
         boolean hovered = inside(mouseX, mouseY, x, y, 260, 18);
-        context.drawString(font, label, x, y + 3, hovered ? TEXT : 0xFFD5DCE5, false);
+        UiText.draw(context, label, x, y + 3, hovered ? TEXT : 0xFFD5DCE5, false);
 
         int tx = x + 286;
         int ty = y + 2;
@@ -294,11 +302,11 @@ public final class NanoHudScreen extends Screen {
 
     private void slider(GuiGraphics context, String label, double value, double min, double max,
                         int x, int y, int id, int mouseX, int mouseY, boolean scale) {
-        context.drawString(font, label, x, y, 0xFFD5DCE5, false);
+        UiText.draw(context, label, x, y, 0xFFD5DCE5, false);
         String shown = scale
             ? String.format(Locale.ROOT, "%.2fx", value)
             : Math.round(value * 100.0) + "%";
-        context.drawString(font, shown, x + 286, y, YELLOW_SOFT, false);
+        UiText.draw(context, shown, x + 286, y, YELLOW_SOFT, false);
 
         int tx = x + 110;
         int ty = y + 11;
@@ -313,13 +321,13 @@ public final class NanoHudScreen extends Screen {
         boolean hovered = inside(mouseX, mouseY, x, y, 64, 20);
         context.fill(x, y, x + 64, y + 20, selected ? 0xFFFFC400 : (hovered ? CARD_LIGHT : 0xFF202630));
         int color = selected ? 0xFF17130A : 0xFFD5DCE5;
-        context.drawCenteredString(font, label, x + 32, y + 6, color);
+        UiText.drawCentered(context, label, x + 32, y + 6, color);
     }
 
     private void button(GuiGraphics context, String label, int x, int y, int w, int h, int mouseX, int mouseY) {
         boolean hovered = inside(mouseX, mouseY, x, y, w, h);
         context.fill(x, y, x + w, y + h, hovered ? 0xFFFFC400 : 0xFF202630);
-        context.drawCenteredString(font, label, x + w / 2, y + (h - 8) / 2 + 1, hovered ? 0xFF17130A : 0xFFD5DCE5);
+        UiText.drawCentered(context, label, x + w / 2, y + (h - 8) / 2 + 1, hovered ? 0xFF17130A : 0xFFD5DCE5);
     }
 
     @Override
@@ -387,6 +395,16 @@ public final class NanoHudScreen extends Screen {
         if (inside(mouseX, mouseY, x + 228, rowY + 240, 126, 20)) {
             hud.x = 10;
             hud.y = 10;
+            markDirty(hud);
+            return true;
+        }
+
+        if (inside(mouseX, mouseY, x + 18, y + PANEL_HEIGHT - 60, 118, 20)) {
+            ClientMenu.openMeteorGui(Minecraft.getInstance());
+            return true;
+        }
+        if (inside(mouseX, mouseY, x + 144, y + PANEL_HEIGHT - 60, 150, 20)) {
+            hud.modernFont = !hud.modernFont;
             markDirty(hud);
             return true;
         }

@@ -15,12 +15,11 @@ import org.lwjgl.glfw.GLFW;
  * touches GL state anymore, so the HUD can never break world rendering.</p>
  */
 public final class NanoHudRenderer {
-    private static boolean toggleHeld;
-    private static boolean settingsHeld;
     private static boolean scaleDownHeld;
     private static boolean scaleUpHeld;
 
     private static boolean dragging;
+    private static boolean leftHeld;
     private static double dragOffsetX;
     private static double dragOffsetY;
 
@@ -39,15 +38,10 @@ public final class NanoHudRenderer {
         Minecraft mc = Minecraft.getInstance();
         NanoHudConfig hud = NanoHudConfig.get();
 
-        boolean toggle = keyDown(mc, hud.toggleKey);
-        if (toggle && !toggleHeld) hud.toggle();
-        toggleHeld = toggle;
-
-        boolean settings = keyDown(mc, hud.settingsKey);
-        if (settings && !settingsHeld && !(mc.screen instanceof NanoHudScreen)) {
-            mc.execute(() -> mc.setScreen(new NanoHudScreen()));
-        }
-        settingsHeld = settings;
+        // The toggle and settings keys arrive through HudKeyListener, which
+        // uses Minecraft's keyboard callback instead of polling GLFW state.
+        // Mobile launchers inject keys only into that callback, so polling
+        // here is why the menu never opened on a phone.
 
         if (!hud.enabled) return;
         if (mc.level == null || mc.player == null || mc.getWindow().isIconified()) return;
@@ -71,6 +65,8 @@ public final class NanoHudRenderer {
         double mouseY = mc.mouseHandler.getScaledYPos(mc.getWindow());
         boolean editor = keyDown(mc, hud.editorKey);
         boolean leftPressed = mc.mouseHandler.isLeftPressed();
+
+        handleChips(mc, hud, editor, panelX, panelY, clampScale(hud, guiHeight), mouseX, mouseY, leftPressed);
 
         if (editor) {
             boolean down = keyDown(mc, GLFW.GLFW_KEY_LEFT_BRACKET);
@@ -101,6 +97,40 @@ public final class NanoHudRenderer {
         }
 
         NanoHudFallback.render(context, hud);
+    }
+
+    /** Key presses routed in from Minecraft's keyboard callback. */
+    public static void onKeyPressed(int key) {
+        try {
+            NanoHudConfig hud = NanoHudConfig.get();
+
+            if (key == hud.toggleKey) {
+                hud.toggle();
+                return;
+            }
+
+            Minecraft mc = Minecraft.getInstance();
+            if (key == hud.settingsKey && mc.screen == null) ClientMenu.openHudScreen(mc);
+        } catch (Throwable ignored) {
+            // A key handler must never break input.
+        }
+    }
+
+    /** Tap handling for the HUD/GUI chips, the touch route to both menus. */
+    private static void handleChips(Minecraft mc, NanoHudConfig hud, boolean editor,
+                                    double panelX, double panelY, double scale,
+                                    double mouseX, double mouseY, boolean leftPressed) {
+        boolean active = !editor && mc.screen == null && leftPressed;
+
+        if (active && !leftHeld) {
+            if (NanoHudFallback.hitHudChip(mouseX, mouseY, panelX, panelY, scale)) {
+                ClientMenu.openHudScreen(mc);
+            } else if (NanoHudFallback.hitGuiChip(mouseX, mouseY, panelX, panelY, scale)) {
+                ClientMenu.openMeteorGui(mc);
+            }
+        }
+
+        leftHeld = active;
     }
 
     private static double clampScale(NanoHudConfig hud, double guiHeight) {

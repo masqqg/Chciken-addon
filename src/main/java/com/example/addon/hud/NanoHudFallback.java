@@ -19,6 +19,14 @@ public final class NanoHudFallback {
     public static final double PANEL_WIDTH = 272.0;
     public static final double PANEL_HEIGHT = 208.0;
 
+    // Touch chips in the footer. On phones the only way to reach a menu is to
+    // tap these, so their rectangles are shared with NanoHudRenderer.
+    public static final int HUD_CHIP_X = 176;
+    public static final int GUI_CHIP_X = 222;
+    public static final int CHIP_Y = 192;
+    public static final int CHIP_WIDTH = 42;
+    public static final int CHIP_HEIGHT = 13;
+
     private static final float[] FPS = new float[32];
     private static int fpsIndex;
 
@@ -129,15 +137,15 @@ public final class NanoHudFallback {
         }
 
         if (!hud.showWatermark && !hud.showPlayer && !hud.showStats) {
-            context.drawCenteredString(mc.font, "HUD HIDDEN", w / 2, h / 2, color(primary, 220));
+            UiText.drawCentered(context, "HUD HIDDEN", w / 2, h / 2, color(primary, 220));
         }
 
         // Footer.
         context.fill(12, h - 17, w - 12, h - 16, color(primary, 45));
         context.fill(12, h - 12, 16, h - 8, color(secondary, 225));
-        context.drawString(mc.font, "CHICKEN CLIENT  //  MASQ", 20, h - 14, color(primary, 200), false);
-        context.drawString(mc.font, "P MENU", w - 96, h - 14, 0xFF8E9AAA, false);
-        context.drawString(mc.font, String.format(Locale.ROOT, "%.2fx", hud.scale), w - 42, h - 14, 0xFF8E9AAA, false);
+        UiText.draw(context, "CHICKEN CLIENT", 20, h - 13, color(primary, 200), false);
+        chip(context, "HUD", HUD_CHIP_X, CHIP_Y, CHIP_WIDTH, CHIP_HEIGHT, primary);
+        chip(context, "GUI", GUI_CHIP_X, CHIP_Y, CHIP_WIDTH, CHIP_HEIGHT, secondary);
     }
 
     /** A soft diagonal band of light travelling across the panel. */
@@ -212,11 +220,11 @@ public final class NanoHudFallback {
             float t = i / (float) Math.max(1, word.length() - 1);
             int c = mix(color(primary, 255), color(secondary, 255), t);
             int wave = animated ? (int) Math.round(Math.sin(time * 2.6 + i * 0.42) * 1.2) : 0;
-            context.drawString(mc.font, character, cursor, 9 + wave, c, true);
-            cursor += mc.font.width(character);
+            UiText.draw(context, character, cursor, 9 + wave, c, true);
+            cursor += UiText.width(character);
         }
 
-        context.drawString(mc.font, leftHand ? "HELD IN YOUR LEFT HAND" : "NANO HUD  //  YELLOW CORE",
+        UiText.draw(context, leftHand ? "HELD IN YOUR LEFT HAND" : "NANO HUD  //  YELLOW CORE",
             38, 21, 0xFF8B97A6, false);
 
         // Live pill.
@@ -226,7 +234,7 @@ public final class NanoHudFallback {
         context.fill(pillX, pillY, pillX + 42, pillY + 12, 0x55000000);
         outline(context, pillX, pillY, pillX + 42, pillY + 12, color(primary, 70));
         context.fill(pillX + 4, pillY + 4, pillX + 8, pillY + 8, color(primary, dotAlpha));
-        context.drawString(mc.font, "LIVE", pillX + 11, pillY + 2, color(primary, 225), false);
+        UiText.draw(context, "LIVE", pillX + 11, pillY + 2, color(primary, 225), false);
     }
 
     private static void drawPlayerCard(GuiGraphics context, Minecraft mc, LocalPlayer player, NanoHudConfig hud,
@@ -293,13 +301,13 @@ public final class NanoHudFallback {
 
         int tx = x + 42;
         String name = player.getName().getString();
-        context.drawString(mc.font, name, tx, y + 6, 0xFFF5F7FA, true);
+        UiText.draw(context, name, tx, y + 6, 0xFFF5F7FA, true);
         int underline = animated
-            ? (int) (Math.max(12, mc.font.width(name)) * (0.55 + 0.45 * (0.5 + 0.5 * Math.sin(time * 2.4))))
-            : Math.max(12, mc.font.width(name));
+            ? (int) (Math.max(12, UiText.width(name)) * (0.55 + 0.45 * (0.5 + 0.5 * Math.sin(time * 2.4))))
+            : Math.max(12, UiText.width(name));
         context.fill(tx, y + 16, tx + underline, y + 17, color(primary, 180));
-        context.drawString(mc.font, "LVL " + player.experienceLevel, x + w - 38, y + 6, color(accent, 220), false);
-        context.drawString(mc.font, "LOCAL PLAYER", tx, y + 20, 0xFF8B97A6, false);
+        UiText.draw(context, "LVL " + player.experienceLevel, x + w - 38, y + 6, color(accent, 220), false);
+        UiText.draw(context, "LOCAL PLAYER", tx, y + 20, 0xFF8B97A6, false);
 
         drawChips(context, mc, player, ratio, tx, y + 26);
 
@@ -315,8 +323,8 @@ public final class NanoHudFallback {
             color(secondary, 225), 0xFF1A222D, time, animated);
         bar(context, barX, y + 52, barW, 2, player.experienceProgress, color(accent, 220), 0xFF1A222D, time, animated);
 
-        context.drawString(mc.font, String.format(Locale.ROOT, "%.1f", health), x + w - 34, y + 39, color(accent, 235), false);
-        context.drawString(mc.font, "ARM " + player.getArmorValue(), x + w - 34, y + 47,
+        UiText.draw(context, String.format(Locale.ROOT, "%.1f", health), x + w - 34, y + 39, color(accent, 235), false);
+        UiText.draw(context, "ARM " + player.getArmorValue(), x + w - 34, y + 47,
             danger ? color(0xFF4350, 225) : color(primary, 200), false);
     }
 
@@ -349,11 +357,11 @@ public final class NanoHudFallback {
         for (int i = 0; i < Math.min(3, labels.size()); i++) {
             String label = labels.get(i);
             int color = colors.get(i);
-            int chipWidth = mc.font.width(label) + 8;
+            int chipWidth = UiText.width(label) + 8;
             context.fill(cursor, y, cursor + chipWidth, y + 10, 0x66000000);
             context.fill(cursor, y, cursor + chipWidth, y + 1, color(color, 210));
             outline(context, cursor, y, cursor + chipWidth, y + 10, color(color, 70));
-            context.drawString(mc.font, label, cursor + 4, y + 2, color, false);
+            UiText.draw(context, label, cursor + 4, y + 2, color, false);
             cursor += chipWidth + 3;
         }
     }
@@ -391,11 +399,11 @@ public final class NanoHudFallback {
         context.fill(x, lineY, x + w, lineY + 1, color(primary, 30));
 
         if (player != null) {
-            context.drawString(mc.font, String.format(Locale.ROOT, "XYZ  %.0f  %.0f  %.0f",
+            UiText.draw(context, String.format(Locale.ROOT, "XYZ  %.0f  %.0f  %.0f",
                 player.getX(), player.getY(), player.getZ()), x, lineY + 5, 0xFF8B97A6, false);
             String dim = player.level().dimension().identifier().toString();
             if (dim.length() > 21) dim = dim.substring(0, 19) + "..";
-            context.drawString(mc.font, "DIM  " + dim, x, lineY + 15, 0xFF6F7B8A, false);
+            UiText.draw(context, "DIM  " + dim, x, lineY + 15, 0xFF6F7B8A, false);
         }
 
         drawFpsGraph(context, x + w - 112, lineY + 4, primary, secondary, animated, time);
@@ -403,8 +411,8 @@ public final class NanoHudFallback {
     }
 
     private static void stat(GuiGraphics context, Minecraft mc, String label, String value, int x, int y, int valueColor) {
-        context.drawString(mc.font, label, x, y, 0xFF7C8794, false);
-        context.drawString(mc.font, value, x, y + 10, valueColor, true);
+        UiText.draw(context, label, x, y, 0xFF7C8794, false);
+        UiText.draw(context, value, x, y + 10, valueColor, true);
     }
 
     private static void drawFpsGraph(GuiGraphics context, int x, int y, int primary, int secondary,
@@ -441,9 +449,9 @@ public final class NanoHudFallback {
             context.fill(cursor, y + 2, cursor + 1, y + h - 2, color(secondary, 75));
         }
 
-        context.drawString(Minecraft.getInstance().font, "FPS", x + 2, y - 8, 0xFF7C8794, false);
+        UiText.draw(context, "FPS", x + 2, y - 8, 0xFF7C8794, false);
         int latest = (int) FPS[Math.max(0, (fpsIndex + FPS.length - 1) % FPS.length)];
-        context.drawString(Minecraft.getInstance().font, Integer.toString(latest), x + w - 22, y - 8,
+        UiText.draw(context, Integer.toString(latest), x + w - 22, y - 8,
             color(primary, 210), false);
     }
 
@@ -460,7 +468,7 @@ public final class NanoHudFallback {
 
         context.fill(x, y, x + w, y + h, 0x55000000);
         context.fill(x, y, x + w, y + 1, color(primary, 45));
-        context.drawString(mc.font, "CONTACTS", x + 4, y + 2, 0xFF7C8794, false);
+        UiText.draw(context, "CONTACTS", x + 4, y + 2, 0xFF7C8794, false);
 
         context.fill(x + 4, lineY, x + w - 4, lineY + 1, 0x22FFFFFF);
         for (int i = 1; i < 8; i++) {
@@ -501,7 +509,7 @@ public final class NanoHudFallback {
         }
 
         if (blips == 0) {
-            context.drawString(mc.font, "NO CONTACTS", center - 30, y + 3, 0xFF5C6672, false);
+            UiText.draw(context, "NO CONTACTS", center - 30, y + 3, 0xFF5C6672, false);
         }
 
         if (hud.animations) {
@@ -557,7 +565,7 @@ public final class NanoHudFallback {
         }
         context.fill(2, h - 6, 34, h + 6, 0xFF2A2119);
         context.fill(0, h - 34, 30, h - 32, color(secondary, 200));
-        context.drawString(Minecraft.getInstance().font, "HAND", 6, h - 12, 0xFF2A2119, false);
+        UiText.draw(context, "HAND", 6, h - 12, 0xFF2A2119, false);
         context.fill(0, h - 36, 2, h - 28, color(secondary, 180));
     }
 
@@ -610,6 +618,34 @@ public final class NanoHudFallback {
         context.fill(x1, y2 - 1, x2, y2, color);
         context.fill(x1, y1, x1 + 1, y2, color);
         context.fill(x2 - 1, y1, x2, y2, color);
+    }
+
+    /** A tappable pill used for the touch menu entries. */
+    private static void chip(GuiGraphics context, String label, int x, int y, int width, int height, int primary) {
+        context.fill(x, y, x + width, y + height, 0x77000000);
+        context.fill(x, y, x + width, y + 1, color(primary, 195));
+        outline(context, x, y, x + width, y + height, color(primary, 80));
+        UiText.drawCentered(context, label, x + width / 2, y + (height - 8) / 2 + 1, color(primary, 230));
+    }
+
+    /** Hit test for the HUD settings chip, in screen coordinates. */
+    public static boolean hitHudChip(double mouseX, double mouseY, double panelX, double panelY, double scale) {
+        return hitChip(mouseX, mouseY, panelX, panelY, scale, HUD_CHIP_X);
+    }
+
+    /** Hit test for the Meteor GUI chip, in screen coordinates. */
+    public static boolean hitGuiChip(double mouseX, double mouseY, double panelX, double panelY, double scale) {
+        return hitChip(mouseX, mouseY, panelX, panelY, scale, GUI_CHIP_X);
+    }
+
+    private static boolean hitChip(double mouseX, double mouseY, double panelX, double panelY,
+                                   double scale, int localX) {
+        if (scale <= 0.0) return false;
+
+        double x = panelX + localX * scale;
+        double y = panelY + CHIP_Y * scale;
+        return mouseX >= x && mouseX <= x + CHIP_WIDTH * scale
+            && mouseY >= y && mouseY <= y + CHIP_HEIGHT * scale;
     }
 
     private static String facing(float yaw) {

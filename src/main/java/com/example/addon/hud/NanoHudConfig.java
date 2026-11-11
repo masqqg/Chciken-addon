@@ -44,6 +44,7 @@ public final class NanoHudConfig {
     public boolean showStats = true;
     public boolean animations = true;
     public boolean lowHealthVignette = true;
+    public boolean modernFont = true;
     public HudMode hudMode = HudMode.NORMAL;
 
     public double wingSpeed = 1.0;
@@ -148,6 +149,7 @@ public final class NanoHudConfig {
         showStats = bool(properties, "show-stats", showStats);
         animations = bool(properties, "animations", animations);
         lowHealthVignette = bool(properties, "low-health-vignette", lowHealthVignette);
+        modernFont = bool(properties, "modern-font", modernFont);
         try {
             hudMode = HudMode.valueOf(properties.getProperty("hud-mode", hudMode.name()));
         } catch (Throwable ignored) {
@@ -184,6 +186,7 @@ public final class NanoHudConfig {
         properties.setProperty("show-stats", Boolean.toString(showStats));
         properties.setProperty("animations", Boolean.toString(animations));
         properties.setProperty("low-health-vignette", Boolean.toString(lowHealthVignette));
+        properties.setProperty("modern-font", Boolean.toString(modernFont));
         properties.setProperty("hud-mode", hudMode.name());
         properties.setProperty("wing-speed", Double.toString(wingSpeed));
         properties.setProperty("wing-amplitude", Double.toString(wingAmplitude));

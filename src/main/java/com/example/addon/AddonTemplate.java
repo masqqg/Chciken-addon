@@ -1,6 +1,7 @@
 package com.example.addon;
 
 import com.example.addon.commands.CommandExample;
+import com.example.addon.hud.HudKeyListener;
 import com.example.addon.modules.BaseFinder;
 import com.example.addon.modules.BlockESP;
 import com.example.addon.modules.BlockWave;
@@ -17,11 +18,13 @@ import com.example.addon.modules.PlayerFinder;
 import com.example.addon.modules.PlayerHat;
 import com.example.addon.modules.PlayerSkeleton;
 import com.example.addon.modules.RedWings;
+import com.example.addon.modules.SlowMotion;
 import com.example.addon.modules.SpawnerFlag;
 import com.example.addon.modules.SusChunkFinder;
 
 import com.mojang.logging.LogUtils;
 import meteordevelopment.meteorclient.addons.GithubRepo;
+import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.addons.MeteorAddon;
 import meteordevelopment.meteorclient.commands.Commands;
 import meteordevelopment.meteorclient.systems.modules.Category;
@@ -54,12 +57,16 @@ public class AddonTemplate extends MeteorAddon {
         Modules.get().add(new PlayerSkeleton());
         Modules.get().add(new Emotes());
         Modules.get().add(new RedWings());
+        Modules.get().add(new SlowMotion());
         Modules.get().add(new SpawnerFlag());
         Modules.get().add(new SusChunkFinder());
 
         // The Chicken Client HUD is intentionally not a Meteor module or
         // HudElement. It is loaded by ChickenHudMixin and configured from
         // config/chicken-client/nano-hud.properties.
+
+        // Keys for the standalone HUD (toggle, settings menu).
+        MeteorClient.EVENT_BUS.subscribe(new HudKeyListener());
 
         // Commands
         Commands.add(new CommandExample());
