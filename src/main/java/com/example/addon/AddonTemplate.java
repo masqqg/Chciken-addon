@@ -3,6 +3,7 @@ package com.example.addon;
 import com.example.addon.commands.CommandExample;
 import com.example.addon.modules.BaseFinder;
 import com.example.addon.modules.BlockESP;
+import com.example.addon.modules.BlockWave;
 import com.example.addon.modules.ChickenFreeLook;
 import com.example.addon.modules.ChickenFullbright;
 import com.example.addon.modules.ChickenFreecam;
@@ -36,6 +37,7 @@ public class AddonTemplate extends MeteorAddon {
         // Modules
         Modules.get().add(new BaseFinder());
         Modules.get().add(new BlockESP());
+        Modules.get().add(new BlockWave());
         Modules.get().add(new ChickenFreecam());
         Modules.get().add(new ChickenFreeLook());
         Modules.get().add(new ChickenFullbright());
@@ -49,8 +51,8 @@ public class AddonTemplate extends MeteorAddon {
         Modules.get().add(new SpawnerFlag());
         Modules.get().add(new SusChunkFinder());
 
-        // The NanoVG HUD is intentionally not a Meteor module or HudElement.
-        // It is loaded by ChickenHudMixin and configured from
+        // The Chicken Client HUD is intentionally not a Meteor module or
+        // HudElement. It is loaded by ChickenHudMixin and configured from
         // config/chicken-client/nano-hud.properties.
 
         // Commands

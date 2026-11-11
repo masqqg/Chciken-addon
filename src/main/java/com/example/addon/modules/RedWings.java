@@ -15,15 +15,16 @@ import meteordevelopment.orbit.EventHandler;
 import net.minecraft.world.entity.player.Player;
 
 /**
- * Cinematic crimson wings for the local player and/or nearby players.
+ * Cinematic crimson wings for the local player and nearby players.
  *
- * <p>Each wing is made from layered feather quads and animated with a slow
- * flap, a pulsing glow and ember particles. The geometry is drawn through the
- * regular 3D render pass so it follows the player through the world.</p>
+ * <p>Every wing is built from a curved arm, layered primary feathers, a bright
+ * leading rib, trailing ribbons and drifting embers. The flap uses a double beat
+ * so it reads like a real wing instead of a slow metronome.</p>
  */
 public class RedWings extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgLook = settings.createGroup("Look");
+    private final SettingGroup sgMotion = settings.createGroup("Motion");
 
     private final Setting<Boolean> self = sgGeneral.add(new BoolSetting.Builder()
         .name("self")
@@ -56,7 +57,68 @@ public class RedWings extends Module {
         .build()
     );
 
-    private final Setting<Double> animationSpeed = sgLook.add(new DoubleSetting.Builder()
+    private final Setting<Double> spread = sgLook.add(new DoubleSetting.Builder()
+        .name("spread")
+        .description("How wide the wings open.")
+        .defaultValue(1.0)
+        .range(0.4, 2.0)
+        .sliderRange(0.6, 1.6)
+        .build()
+    );
+
+    private final Setting<Double> curve = sgLook.add(new DoubleSetting.Builder()
+        .name("curve")
+        .description("How much the feathers bend backwards.")
+        .defaultValue(0.45)
+        .range(0.0, 1.5)
+        .sliderRange(0.0, 1.0)
+        .build()
+    );
+
+    private final Setting<Integer> feathers = sgLook.add(new IntSetting.Builder()
+        .name("feathers")
+        .defaultValue(9)
+        .range(3, 16)
+        .sliderRange(5, 13)
+        .build()
+    );
+
+    private final Setting<Boolean> glow = sgLook.add(new BoolSetting.Builder()
+        .name("glow")
+        .description("Soft halo behind every feather.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Boolean> ribs = sgLook.add(new BoolSetting.Builder()
+        .name("ribs")
+        .description("Bright leading rib along each feather.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Boolean> trail = sgLook.add(new BoolSetting.Builder()
+        .name("trail")
+        .description("Fading ribbons behind the wing tips.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Boolean> aura = sgLook.add(new BoolSetting.Builder()
+        .name("aura")
+        .description("Pulsing glow around the shoulders.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Boolean> embers = sgLook.add(new BoolSetting.Builder()
+        .name("embers")
+        .description("Drifting sparks around the wing tips.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Double> animationSpeed = sgMotion.add(new DoubleSetting.Builder()
         .name("animation-speed")
         .defaultValue(1.0)
         .range(0.2, 3.0)
@@ -64,24 +126,18 @@ public class RedWings extends Module {
         .build()
     );
 
-    private final Setting<Integer> feathers = sgLook.add(new IntSetting.Builder()
-        .name("feathers")
-        .defaultValue(7)
-        .range(3, 12)
-        .sliderRange(4, 10)
+    private final Setting<Double> amplitude = sgMotion.add(new DoubleSetting.Builder()
+        .name("flap-amplitude")
+        .description("How far the wings travel on each beat.")
+        .defaultValue(1.0)
+        .range(0.3, 2.0)
+        .sliderRange(0.5, 1.5)
         .build()
     );
 
-    private final Setting<Boolean> glow = sgLook.add(new BoolSetting.Builder()
-        .name("glow")
-        .description("Draw a larger transparent glow layer behind the wings.")
-        .defaultValue(true)
-        .build()
-    );
-
-    private final Setting<Boolean> embers = sgLook.add(new BoolSetting.Builder()
-        .name("embers")
-        .description("Animated ember sparks around the wing tips.")
+    private final Setting<Boolean> doubleBeat = sgMotion.add(new BoolSetting.Builder()
+        .name("double-beat")
+        .description("Fast second beat after the main flap, like a real bird.")
         .defaultValue(true)
         .build()
     );
@@ -94,12 +150,18 @@ public class RedWings extends Module {
 
     private final Setting<SettingColor> secondary = sgLook.add(new ColorSetting.Builder()
         .name("secondary")
-        .defaultValue(new SettingColor(255, 196, 0))
+        .defaultValue(new SettingColor(255, 120, 0))
+        .build()
+    );
+
+    private final Setting<SettingColor> accent = sgLook.add(new ColorSetting.Builder()
+        .name("accent")
+        .defaultValue(new SettingColor(255, 214, 90))
         .build()
     );
 
     public RedWings() {
-        super(AddonTemplate.CATEGORY, "red-wings", "Animated crimson wings with glow and ember trails.");
+        super(AddonTemplate.CATEGORY, "red-wings", "Layered crimson wings with glow, ribs and ember trails.");
     }
 
     @EventHandler
@@ -123,6 +185,8 @@ public class RedWings extends Module {
         double time = System.nanoTime() / 1_000_000_000.0;
         double speed = animationSpeed.get();
         double s = scale.get();
+        double spread = this.spread.get();
+        double curve = this.curve.get();
 
         double yaw = Math.toRadians(player.getYRot());
         double forwardX = -Math.sin(yaw);
@@ -130,113 +194,218 @@ public class RedWings extends Module {
         double rightX = Math.cos(yaw);
         double rightZ = Math.sin(yaw);
 
-        double baseX = player.getX() - forwardX * 0.17;
+        double baseX = player.getX() - forwardX * 0.16 * s;
         double baseY = player.getY() + 1.18 * s;
-        double baseZ = player.getZ() - forwardZ * 0.17;
+        double baseZ = player.getZ() - forwardZ * 0.16 * s;
 
-        double flap = Math.sin(time * 4.1 * speed) * 0.42
-            + Math.sin(time * 8.3 * speed) * 0.07
-            + 0.18;
+        double motion = Math.sqrt(player.getDeltaMovement().x * player.getDeltaMovement().x
+            + player.getDeltaMovement().z * player.getDeltaMovement().z);
+        double lean = Math.min(0.22, motion * 0.05);
 
-        // A small phase offset between the two wings makes the flap feel organic.
-        drawWing(event, baseX, baseY, baseZ, rightX, rightZ, forwardX, forwardZ, -1, flap - 0.07, s, time, speed);
-        drawWing(event, baseX, baseY, baseZ, rightX, rightZ, forwardX, forwardZ, 1, flap + 0.07, s, time, speed);
+        double flap = flap(time, speed);
+
+        if (aura.get()) drawAura(event, baseX, baseY, baseZ, s, time, speed);
+
+        for (int side = -1; side <= 1; side += 2) {
+            drawWing(event, baseX, baseY, baseZ, rightX, rightZ, forwardX, forwardZ,
+                side, flap + side * 0.06, s, spread, curve, lean, time, speed);
+        }
+    }
+
+    private double flap(double time, double speed) {
+        double base = time * 3.8 * speed;
+        double wave = doubleBeat.get()
+            ? Math.sin(base) * 0.58 + Math.sin(base * 2.0 + 0.9) * 0.16
+            : Math.sin(base) * 0.68;
+        return (wave + 0.22) * amplitude.get();
+    }
+
+    private void drawAura(Render3DEvent event, double x, double y, double z, double s, double time, double speed) {
+        Color color = primary.get();
+        double pulse = 0.5 + 0.5 * Math.sin(time * 2.4 * speed);
+        int segments = 20;
+        double radius = (0.95 + 0.14 * pulse) * s;
+        int alpha = 10 + (int) (10 * pulse);
+
+        for (int i = 0; i < segments; i++) {
+            double a0 = Math.PI * 2.0 * i / segments;
+            double a1 = Math.PI * 2.0 * (i + 1) / segments;
+            event.renderer.quad(
+                x, y, z,
+                x, y + Math.sin(a0) * radius, z + Math.cos(a0) * radius * 0.55,
+                x, y + Math.sin(a1) * radius, z + Math.cos(a1) * radius * 0.55,
+                x, y, z,
+                withAlpha(color, alpha));
+        }
     }
 
     private void drawWing(Render3DEvent event, double baseX, double baseY, double baseZ,
                           double rightX, double rightZ, double forwardX, double forwardZ,
-                          int side, double flap, double s, double time, double speed) {
+                          int side, double flap, double s, double spread, double curve, double lean,
+                          double time, double speed) {
         int count = feathers.get();
         Color primary = this.primary.get();
         Color secondary = this.secondary.get();
+        Color accent = this.accent.get();
 
-        double rootX = baseX + rightX * side * 0.16 * s;
+        double rootX = baseX + rightX * side * 0.13 * s;
         double rootY = baseY;
-        double rootZ = baseZ + rightZ * side * 0.16 * s;
+        double rootZ = baseZ + rightZ * side * 0.13 * s;
+
+        // Curved wing arm from the shoulder outwards.
+        double armLength = 0.52 * spread * s;
+        double armLift = (0.14 + flap * 0.30) * s;
+        double armBack = 0.10 * s;
+
+        double prevX = rootX;
+        double prevY = rootY;
+        double prevZ = rootZ;
+
+        for (int segment = 1; segment <= 3; segment++) {
+            double t = segment / 3.0;
+            double bend = Math.sin(t * Math.PI * 0.5);
+
+            double nextX = rootX + rightX * side * armLength * t - forwardX * armBack * t;
+            double nextY = rootY + armLift * bend - lean * 0.18 * s * t;
+            double nextZ = rootZ + rightZ * side * armLength * t - forwardZ * armBack * t;
+
+            double width = (0.060 - t * 0.030) * s;
+            Color armColor = withAlpha(mix(primary, secondary, (float) (0.2 + t * 0.45)), 195 - segment * 12);
+            featherQuad(event, prevX, prevY, prevZ, nextX, nextY, nextZ, width, width * 0.8, armColor, armColor);
+
+            prevX = nextX;
+            prevY = nextY;
+            prevZ = nextZ;
+        }
+
+        double shoulderX = prevX;
+        double shoulderY = prevY;
+        double shoulderZ = prevZ;
 
         for (int i = 0; i < count; i++) {
             double t = count == 1 ? 0.5 : i / (double) (count - 1);
-            double spread = 0.42 + t * 0.95;
-            double back = 0.06 + t * 0.58;
-            double lift = 0.08 + Math.sin(t * Math.PI) * 0.38 + flap * (0.22 + t * 0.34);
+            double spreadDistance = (0.26 + t * 0.92) * spread;
+            double back = 0.05 + t * 0.60;
+            double lift = (0.08 + Math.sin(t * Math.PI) * 0.34) * s + flap * (0.20 + t * 0.42) * s;
 
-            double tipX = rootX + rightX * side * spread * s - forwardX * back * s;
-            double tipY = rootY + lift * s;
-            double tipZ = rootZ + rightZ * side * spread * s - forwardZ * back * s;
+            double tipX = shoulderX + rightX * side * spreadDistance * s - forwardX * back * s;
+            double tipY = shoulderY + lift - lean * 0.35 * s;
+            double tipZ = shoulderZ + rightZ * side * spreadDistance * s - forwardZ * back * s;
 
-            double rootWidth = (0.035 + (1.0 - t) * 0.045) * s;
-            double tipWidth = (0.012 + t * 0.024) * s;
+            double midX = (shoulderX + tipX) * 0.5 - forwardX * curve * 0.20 * s;
+            double midY = (shoulderY + tipY) * 0.5 + curve * 0.16 * s;
+            double midZ = (shoulderZ + tipZ) * 0.5 - forwardZ * curve * 0.20 * s;
 
-            Color rootColor = mix(primary, secondary, (float) (t * 0.75));
-            Color tipColor = mix(secondary, primary, (float) (0.15 + t * 0.5));
+            double rootWidth = (0.030 + (1.0 - t) * 0.040) * s;
+            double midWidth = rootWidth * 0.78;
+            double tipWidth = (0.009 + t * 0.022) * s;
 
-            int rootAlpha = 210 - (int) (t * 45);
-            int tipAlpha = 170 - (int) (t * 55);
+            Color rootColor = mix(primary, secondary, (float) (t * 0.72));
+            Color midColor = mix(secondary, accent, (float) (0.10 + t * 0.35));
+            Color tipColor = mix(accent, primary, (float) (0.10 + t * 0.40));
+
+            int rootAlpha = 215 - (int) (t * 50);
+            int midAlpha = 195 - (int) (t * 55);
+            int tipAlpha = 165 - (int) (t * 60);
 
             if (glow.get()) {
-                Color glowColor = withAlpha(primary, 28 + (int) (t * 18));
-                quad(event, rootX, rootY - rootWidth * 2.4, rootZ,
-                    rootX, rootY + rootWidth * 2.4, rootZ,
-                    tipX, tipY + tipWidth * 2.4, tipZ,
-                    tipX, tipY - tipWidth * 2.4, tipZ,
-                    glowColor, glowColor, withAlpha(secondary, 24), withAlpha(secondary, 24));
+                Color halo = withAlpha(primary, 26 + (int) (t * 20));
+                featherQuad(event, shoulderX, shoulderY, shoulderZ, tipX, tipY, tipZ,
+                    rootWidth * 2.6, tipWidth * 2.6 + 0.02 * s, halo, withAlpha(secondary, 18));
             }
 
-            quad(event, rootX, rootY - rootWidth, rootZ,
-                rootX, rootY + rootWidth, rootZ,
-                tipX, tipY + tipWidth, tipZ,
-                tipX, tipY - tipWidth, tipZ,
-                withAlpha(rootColor, rootAlpha), withAlpha(rootColor, rootAlpha),
-                withAlpha(tipColor, tipAlpha), withAlpha(tipColor, tipAlpha));
+            featherQuad(event, shoulderX, shoulderY, shoulderZ, midX, midY, midZ,
+                rootWidth, midWidth, withAlpha(rootColor, rootAlpha), withAlpha(midColor, midAlpha));
+            featherQuad(event, midX, midY, midZ, tipX, tipY, tipZ,
+                midWidth, tipWidth, withAlpha(midColor, midAlpha), withAlpha(tipColor, tipAlpha));
 
-            // A bright leading rib along each feather.
-            event.renderer.line(rootX, rootY, rootZ, tipX, tipY, tipZ,
-                withAlpha(mix(primary, Color.WHITE, 0.35f), 120));
-
-            // A soft trailing ribbon from the wing tip.
-            if (glow.get()) {
-                event.renderer.line(tipX, tipY, tipZ,
-                    tipX - forwardX * (0.18 + t * 0.22) * s,
-                    tipY - 0.07 * s,
-                    tipZ - forwardZ * (0.18 + t * 0.22) * s,
-                    withAlpha(secondary, 55 - (int) (t * 20)));
+            // Crossed ribbon for volume, so the wings do not disappear edge-on.
+            if (t < 0.55) {
+                double crossWidth = rootWidth * 0.55;
+                event.renderer.quad(
+                    shoulderX - forwardX * crossWidth, shoulderY, shoulderZ - forwardZ * crossWidth,
+                    shoulderX + forwardX * crossWidth, shoulderY, shoulderZ + forwardZ * crossWidth,
+                    tipX + forwardX * crossWidth * 0.6, tipY, tipZ + forwardZ * crossWidth * 0.6,
+                    tipX - forwardX * crossWidth * 0.6, tipY, tipZ - forwardZ * crossWidth * 0.6,
+                    withAlpha(rootColor, 95), withAlpha(rootColor, 95),
+                    withAlpha(tipColor, 60), withAlpha(tipColor, 60));
             }
 
-            if (embers.get()) {
-                drawEmber(event, tipX, tipY, tipZ, t, time, speed, primary, secondary);
+            if (ribs.get()) {
+                Color rib = withAlpha(mix(accent, Color.WHITE, 0.35f), 135 - (int) (t * 50));
+                event.renderer.line(shoulderX, shoulderY, shoulderZ, midX, midY, midZ, rib);
+                event.renderer.line(midX, midY, midZ, tipX, tipY, tipZ, rib);
+            }
+
+            if (trail.get()) {
+                double tx = tipX;
+                double ty = tipY;
+                double tz = tipZ;
+
+                for (int segment = 0; segment < 3; segment++) {
+                    double length = (0.16 + segment * 0.10) * s;
+                    double nextX = tx - forwardX * length - rightX * side * length * 0.25;
+                    double nextY = ty - (0.09 + segment * 0.06) * s;
+                    double nextZ = tz - forwardZ * length - rightZ * side * length * 0.25;
+
+                    int alpha = Math.max(0, 70 - segment * 20);
+                    featherQuad(event, tx, ty, tz, nextX, nextY, nextZ,
+                        (0.018 - segment * 0.004) * s, (0.009 - segment * 0.002) * s,
+                        withAlpha(secondary, alpha), withAlpha(primary, Math.max(0, alpha - 28)));
+
+                    tx = nextX;
+                    ty = nextY;
+                    tz = nextZ;
+                }
+            }
+
+            if (embers.get() && t > 0.30) {
+                drawEmber(event, tipX, tipY, tipZ, t, 0.0, time, speed, primary, secondary);
+                if (t > 0.65) {
+                    drawEmber(event, tipX, tipY, tipZ, t, 1.9, time, speed, secondary, accent);
+                }
             }
         }
     }
 
-    private void drawEmber(Render3DEvent event, double x, double y, double z, double t,
-                           double time, double speed, Color primary, Color secondary) {
-        double phase = time * (1.6 + t * 1.1) * speed + t * 6.0;
-        double spread = Math.sin(phase * 1.7) * 0.22;
-        double rise = (Math.sin(phase) * 0.5 + 0.5) * 0.35;
-        double size = 0.018 + (Math.sin(phase * 2.1) * 0.5 + 0.5) * 0.022;
+    private void drawEmber(Render3DEvent event, double x, double y, double z, double t, double offset,
+                           double time, double speed, Color from, Color to) {
+        double phase = time * (1.5 + t * 1.0) * speed + t * 6.0 + offset;
+        double rise = (Math.sin(phase) * 0.5 + 0.5) * 0.45;
+        double drift = Math.sin(phase * 1.3) * 0.20;
+        double driftZ = Math.cos(phase * 0.9) * 0.20;
+        double size = 0.014 + (Math.sin(phase * 2.1) * 0.5 + 0.5) * 0.022;
 
-        Color color = withAlpha(mix(primary, secondary, (float) t), 80 + (int) (t * 100));
+        int alpha = (int) (55 + 125 * (Math.sin(phase * 1.7) * 0.5 + 0.5));
+        Color color = withAlpha(mix(from, to, (float) t), alpha);
+
         event.renderer.quad(
             x - size, y + rise, z - size,
             x + size, y + rise, z - size,
-            x + size, y + rise + size, z + size,
-            x - size, y + rise + size, z + size,
-            color
-        );
+            x + size, y + rise + size * 2.2, z + size,
+            x - size, y + rise + size * 2.2, z + size,
+            color);
+        event.renderer.quad(
+            x - size, y + rise, z + size,
+            x + size, y + rise, z + size,
+            x + size, y + rise + size * 2.2, z - size,
+            x - size, y + rise + size * 2.2, z - size,
+            color);
 
-        if (t > 0.75) {
-            event.renderer.line(x, y, z, x + spread, y + rise + 0.15, z - spread,
-                withAlpha(secondary, 65));
-        }
+        event.renderer.line(x, y + rise, z, x + drift, y + rise + 0.26, z + driftZ,
+            withAlpha(to, Math.max(0, alpha / 2)));
     }
 
-    private static void quad(Render3DEvent event,
-                             double x1, double y1, double z1,
-                             double x2, double y2, double z2,
-                             double x3, double y3, double z3,
-                             double x4, double y4, double z4,
-                             Color c1, Color c2, Color c3, Color c4) {
-        event.renderer.quad(x1, y1, z1, x2, y2, z2, x3, y3, z3, x4, y4, z4, c1, c2, c3, c4);
+    private static void featherQuad(Render3DEvent event,
+                                    double x0, double y0, double z0,
+                                    double x1, double y1, double z1,
+                                    double w0, double w1, Color c0, Color c1) {
+        event.renderer.quad(
+            x0, y0 - w0, z0,
+            x0, y0 + w0, z0,
+            x1, y1 + w1, z1,
+            x1, y1 - w1, z1,
+            c0, c0, c1, c1);
     }
 
     private static Color mix(Color from, Color to, float t) {

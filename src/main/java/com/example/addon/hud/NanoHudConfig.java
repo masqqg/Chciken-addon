@@ -12,7 +12,7 @@ import java.nio.file.Path;
 import java.util.Properties;
 
 /**
- * Standalone configuration for the NanoVG HUD.
+ * Standalone configuration for the Chicken Client HUD.
  *
  * <p>This intentionally has no Meteor dependency: the HUD keeps its own file,
  * toggle key and editor state so it can run independently of Meteor's module
@@ -43,6 +43,7 @@ public final class NanoHudConfig {
     public boolean showWatermark = true;
     public boolean showStats = true;
     public boolean animations = true;
+    public boolean lowHealthVignette = true;
     public HudMode hudMode = HudMode.NORMAL;
 
     public double wingSpeed = 1.0;
@@ -140,6 +141,7 @@ public final class NanoHudConfig {
         showWatermark = bool(properties, "show-watermark", showWatermark);
         showStats = bool(properties, "show-stats", showStats);
         animations = bool(properties, "animations", animations);
+        lowHealthVignette = bool(properties, "low-health-vignette", lowHealthVignette);
         try {
             hudMode = HudMode.valueOf(properties.getProperty("hud-mode", hudMode.name()));
         } catch (Throwable ignored) {
@@ -175,6 +177,7 @@ public final class NanoHudConfig {
         properties.setProperty("show-watermark", Boolean.toString(showWatermark));
         properties.setProperty("show-stats", Boolean.toString(showStats));
         properties.setProperty("animations", Boolean.toString(animations));
+        properties.setProperty("low-health-vignette", Boolean.toString(lowHealthVignette));
         properties.setProperty("hud-mode", hudMode.name());
         properties.setProperty("wing-speed", Double.toString(wingSpeed));
         properties.setProperty("wing-amplitude", Double.toString(wingAmplitude));
@@ -185,7 +188,7 @@ public final class NanoHudConfig {
         try {
             Files.createDirectories(FILE.getParent());
             try (OutputStream output = Files.newOutputStream(FILE)) {
-                properties.store(output, "Chicken Client standalone NanoVG HUD");
+                properties.store(output, "Chicken Client standalone HUD");
             }
         } catch (Throwable throwable) {
             LOG.warn("Could not save {}", FILE, throwable);

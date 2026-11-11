@@ -13,6 +13,11 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public abstract class ChickenHudMixin {
     @Inject(method = "render", at = @At("TAIL"))
     private void chicken$renderNanoHud(GuiGraphics context, DeltaTracker tickCounter, CallbackInfo ci) {
-        NanoHudRenderer.render(context);
+        // Never let a HUD problem escape into the game loop: an exception here
+        // would take down the whole frame (or the world render) with it.
+        try {
+            NanoHudRenderer.render(context);
+        } catch (Throwable ignored) {
+        }
     }
 }
