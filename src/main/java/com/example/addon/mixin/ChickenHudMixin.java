@@ -13,6 +13,6 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public abstract class ChickenHudMixin {
     @Inject(method = "render", at = @At("TAIL"))
     private void chicken$renderNanoHud(GuiGraphics context, DeltaTracker tickCounter, CallbackInfo ci) {
-        NanoHudRenderer.render();
+        NanoHudRenderer.render(context);
     }
 }

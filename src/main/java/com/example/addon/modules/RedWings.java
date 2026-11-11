@@ -138,8 +138,9 @@ public class RedWings extends Module {
             + Math.sin(time * 8.3 * speed) * 0.07
             + 0.18;
 
-        drawWing(event, baseX, baseY, baseZ, rightX, rightZ, forwardX, forwardZ, -1, flap, s, time, speed);
-        drawWing(event, baseX, baseY, baseZ, rightX, rightZ, forwardX, forwardZ, 1, flap, s, time, speed);
+        // A small phase offset between the two wings makes the flap feel organic.
+        drawWing(event, baseX, baseY, baseZ, rightX, rightZ, forwardX, forwardZ, -1, flap - 0.07, s, time, speed);
+        drawWing(event, baseX, baseY, baseZ, rightX, rightZ, forwardX, forwardZ, 1, flap + 0.07, s, time, speed);
     }
 
     private void drawWing(Render3DEvent event, double baseX, double baseY, double baseZ,

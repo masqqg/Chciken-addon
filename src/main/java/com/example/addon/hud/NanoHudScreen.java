@@ -57,7 +57,9 @@ public final class NanoHudScreen extends Screen {
 
         context.drawString(font, "CHICKEN CLIENT", x + 18, y + 16, YELLOW, false);
         context.drawString(font, "HUD SETTINGS  //  STANDALONE NANO HUD", x + 18, y + 28, MUTED, false);
-        context.drawString(font, "F8", x + PANEL_WIDTH - 30, y + 16, YELLOW_SOFT, false);
+        button(context, "MODE: " + (hud.hudMode == NanoHudConfig.HudMode.LEFT_HAND ? "LEFT HAND" : "NORMAL"),
+            x + PANEL_WIDTH - 190, y + 12, 150, 18, mouseX, mouseY);
+        context.drawString(font, "F8", x + PANEL_WIDTH - 28, y + 16, YELLOW_SOFT, false);
 
         int rowY = y + 52;
         toggle(context, "Watermark", hud.showWatermark, x + 18, rowY, mouseX, mouseY);
@@ -231,7 +233,7 @@ public final class NanoHudScreen extends Screen {
             for (int i = 0; i < 3; i++) {
                 int tipX = rootX + side * (7 + i * 4);
                 int flap = animated
-                    ? (int) Math.round(Math.sin(time * 7.5 * speed + i * 0.7) * 2.0 * amplitude)
+                    ? (int) Math.round(Math.sin(time * 7.5 * speed + i * 0.7 + side * 0.9) * 2.0 * amplitude)
                     : 0;
                 int tipY = y + 6 + i * 4 + flap;
                 int left = Math.min(rootX, tipX);
@@ -391,6 +393,14 @@ public final class NanoHudScreen extends Screen {
 
         if (inside(mouseX, mouseY, x + 286, y + PANEL_HEIGHT - 36, 56, 20)) {
             onClose();
+            return true;
+        }
+
+        if (inside(mouseX, mouseY, x + PANEL_WIDTH - 190, y + 12, 150, 18)) {
+            hud.hudMode = hud.hudMode == NanoHudConfig.HudMode.LEFT_HAND
+                ? NanoHudConfig.HudMode.NORMAL
+                : NanoHudConfig.HudMode.LEFT_HAND;
+            markDirty(hud);
             return true;
         }
 

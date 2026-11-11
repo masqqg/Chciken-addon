@@ -19,6 +19,11 @@ import java.util.Properties;
  * and renderer systems.</p>
  */
 public final class NanoHudConfig {
+    public enum HudMode {
+        NORMAL,
+        LEFT_HAND
+    }
+
     private static final Logger LOG = LoggerFactory.getLogger("ChickenClient/NanoHud");
     private static final Path FILE = FabricLoader.getInstance().getConfigDir()
         .resolve("chicken-client").resolve("nano-hud.properties");
@@ -38,6 +43,7 @@ public final class NanoHudConfig {
     public boolean showWatermark = true;
     public boolean showStats = true;
     public boolean animations = true;
+    public HudMode hudMode = HudMode.NORMAL;
 
     public double wingSpeed = 1.0;
     public double wingAmplitude = 1.0;
@@ -134,6 +140,11 @@ public final class NanoHudConfig {
         showWatermark = bool(properties, "show-watermark", showWatermark);
         showStats = bool(properties, "show-stats", showStats);
         animations = bool(properties, "animations", animations);
+        try {
+            hudMode = HudMode.valueOf(properties.getProperty("hud-mode", hudMode.name()));
+        } catch (Throwable ignored) {
+            hudMode = HudMode.NORMAL;
+        }
         wingSpeed = decimal(properties, "wing-speed", wingSpeed);
         wingAmplitude = decimal(properties, "wing-amplitude", wingAmplitude);
         primary = color(properties, "primary", primary);
@@ -164,6 +175,7 @@ public final class NanoHudConfig {
         properties.setProperty("show-watermark", Boolean.toString(showWatermark));
         properties.setProperty("show-stats", Boolean.toString(showStats));
         properties.setProperty("animations", Boolean.toString(animations));
+        properties.setProperty("hud-mode", hudMode.name());
         properties.setProperty("wing-speed", Double.toString(wingSpeed));
         properties.setProperty("wing-amplitude", Double.toString(wingAmplitude));
         properties.setProperty("primary", Integer.toHexString(primary));

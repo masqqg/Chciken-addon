@@ -4,6 +4,8 @@
 
 Animated design preview of the yellow NanoVG HUD and the in-game settings card.
 
+On Android/aarch64 and non-OpenGL renderers the HUD automatically switches to a native-free Minecraft GUI fallback, so the desktop NanoVG natives are never loaded there.
+
 Chicken Client is a Meteor Client addon for Minecraft 1.21.11.
 
 ## Included
@@ -14,7 +16,7 @@ Chicken Client is a Meteor Client addon for Minecraft 1.21.11.
 - **Free Look** - independent camera look with an optional through-walls mode.
 - **Block ESP** - configurable block scanner with boxes and tracers.
 - **Storage ESP** - container detection with block-entity debug and chunk data readouts.
-- **Nano HUD** - a fully standalone NanoVG HUD with its own config, mixin, GL frame, font and native libraries. It does not depend on Meteor's HUD, settings, modules or 2D renderer. It has an animated cloud watermark, player card with flapping yellow wings, orbiting avatar aura, health/armor/XP bars, a live FPS graph, ping/FPS/speed counters, coordinates, floating particles and a low-health warning. F7 toggles it; F8 opens the Meteor-free in-game settings screen with a live yellow HUD preview, animated player card, wing speed/amplitude sliders and instant color/toggle updates; hold right-shift, drag with the left mouse button and use `[`/`]` to scale. The main brand color is yellow. Config: `config/chicken-client/nano-hud.properties`.
+- **Nano HUD** - a fully standalone NanoVG HUD with its own config, mixin, GL frame, font and native libraries. It does not depend on Meteor's HUD, settings, modules or 2D renderer. It has an animated cloud watermark, player card with flapping yellow wings, orbiting avatar aura, health/armor/XP bars, a live FPS graph, ping/FPS/speed counters, coordinates, floating particles and a low-health warning. F7 toggles it; F8 opens the Meteor-free in-game settings screen with a live yellow HUD preview, animated player card, wing speed/amplitude sliders and instant color/toggle updates. Hold right-shift, drag with the left mouse button and use `[`/`]` to scale. The main brand color is yellow. HUD mode can be switched between the normal overlay and a **LEFT HAND** panel with a glove frame; left/right wings flap on separate phases. Config: `config/chicken-client/nano-hud.properties`.
 - **Red Wings** - layered animated crimson wings for yourself and nearby players, with a double-beat flap, glow, feather ribs, trailing ribbons and ember trails.
 - **Cosmic Sky** - a cinematic 3D atmosphere with ringed planets and orbiting moons, drifting nebula clouds, aurora ribbons, twinkling stars, comets and shooting stars, using the yellow Chicken Client palette by default.
 - ClusterBypass, BaseFinder, PlayerFinder, SpawnerFlag, ClearRender and Storage ESP utilities.

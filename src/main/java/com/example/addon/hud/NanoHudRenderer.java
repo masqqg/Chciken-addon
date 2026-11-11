@@ -8,6 +8,7 @@ import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.textures.GpuTexture;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.player.LocalPlayer;
 import org.lwjgl.glfw.GLFW;
 import org.lwjgl.nanovg.NVGColor;
@@ -43,6 +44,7 @@ import static org.lwjgl.nanovg.NanoVG.nvgMoveTo;
 import static org.lwjgl.nanovg.NanoVG.nvgRGBA;
 import static org.lwjgl.nanovg.NanoVG.nvgRect;
 import static org.lwjgl.nanovg.NanoVG.nvgRestore;
+import static org.lwjgl.nanovg.NanoVG.nvgRotate;
 import static org.lwjgl.nanovg.NanoVG.nvgRoundedRect;
 import static org.lwjgl.nanovg.NanoVG.nvgSave;
 import static org.lwjgl.nanovg.NanoVG.nvgScale;
@@ -95,7 +97,7 @@ public final class NanoHudRenderer {
     private NanoHudRenderer() {
     }
 
-    public static void render() {
+    public static void render(GuiGraphics context) {
         Minecraft mc = Minecraft.getInstance();
         NanoHudConfig hud = NanoHudConfig.get();
 
@@ -112,7 +114,18 @@ public final class NanoHudRenderer {
         if (!hud.enabled) return;
         if (mc.level == null || mc.player == null || mc.getWindow().isIconified()) return;
         if (mc.options.hideGui) return;
-        if (!ensureContext()) return;
+
+        // Android/ARM and non-GL renderers use the native-free GUI fallback.
+        // This keeps the HUD usable and avoids the NanoVG native crash path.
+        if (NanoHudFallback.isUnavailable() || !(RenderSystem.getDevice() instanceof GlDevice)) {
+            NanoHudFallback.render(context, hud);
+            return;
+        }
+
+        if (!ensureContext()) {
+            NanoHudFallback.render(context, hud);
+            return;
+        }
 
         RenderTarget target = mc.getMainRenderTarget();
         int guiWidth = mc.getWindow().getGuiScaledWidth();
@@ -120,7 +133,10 @@ public final class NanoHudRenderer {
         if (guiWidth <= 0 || guiHeight <= 0 || target.width <= 0 || target.height <= 0) return;
 
         int fbo = resolveFramebuffer(target);
-        if (fbo == -1) return;
+        if (fbo == -1) {
+            NanoHudFallback.render(context, hud);
+            return;
+        }
 
         double mouseX = mc.mouseHandler.getScaledXPos(mc.getWindow());
         double mouseY = mc.mouseHandler.getScaledYPos(mc.getWindow());
@@ -149,7 +165,15 @@ public final class NanoHudRenderer {
             if (mc.screen == null && !mc.mouseHandler.isMouseGrabbed()) mc.mouseHandler.grabMouse();
         }
 
-        handleDragging(hud, editor, leftPressed, mouseX, mouseY);
+        if (hud.hudMode == NanoHudConfig.HudMode.LEFT_HAND) {
+            if (dragging) {
+                hud.endDrag();
+                dragging = false;
+            }
+        }
+        else {
+            handleDragging(hud, editor, leftPressed, mouseX, mouseY);
+        }
 
         float dpr = (float) target.width / guiWidth;
 
@@ -211,17 +235,52 @@ public final class NanoHudRenderer {
         double time = System.nanoTime() / 1_000_000_000.0;
         double open = editor ? 1.0 : hud.openProgress();
         double scale = hud.scale;
+        boolean leftHand = hud.hudMode == NanoHudConfig.HudMode.LEFT_HAND;
+        if (leftHand) {
+            scale = Math.min(scale, (mc.getWindow().getGuiScaledHeight() - 24.0) / PANEL_HEIGHT);
+        }
 
-        double panelX = hud.panelX() + (1.0 - open) * -26.0;
-        double panelY = hud.panelY() + (1.0 - open) * -8.0;
+        double panelX;
+        double panelY;
+        if (leftHand) {
+            panelX = 14.0;
+            panelY = mc.getWindow().getGuiScaledHeight() - PANEL_HEIGHT * scale - 12.0;
+        }
+        else {
+            panelX = hud.panelX() + (1.0 - open) * -26.0;
+            panelY = hud.panelY() + (1.0 - open) * -8.0;
+        }
         float alpha = (float) (0.08 + 0.92 * open);
 
         nvgSave(vg);
+        if (leftHand) {
+            float centerX = (float) (panelX + PANEL_WIDTH * scale * 0.5);
+            float centerY = (float) (panelY + PANEL_HEIGHT * scale * 0.5);
+            nvgTranslate(vg, centerX, centerY);
+            nvgRotate(vg, (float) Math.toRadians(-5.0));
+            nvgTranslate(vg, -centerX, -centerY);
+        }
         nvgTranslate(vg, (float) panelX, (float) panelY);
         nvgScale(vg, (float) scale, (float) scale);
         nvgGlobalAlpha(vg, alpha);
+        if (leftHand) drawHeldHand(time, hud.primary, hud.secondary, false);
         drawPanel(hud, mc, time, editor);
+        if (leftHand) drawHeldHand(time, hud.primary, hud.secondary, true);
         nvgRestore(vg);
+    }
+
+    private static void drawHeldHand(double time, int primary, int secondary, boolean front) {
+        if (!front) {
+            fillRound(-16.0f, PANEL_HEIGHT - 28.0f, 50.0f, 90.0f, 18.0f, argb(38, 28, 20, 245));
+            fillRound(-10.0f, PANEL_HEIGHT - 42.0f, 40.0f, 72.0f, 16.0f, argb(76, 54, 34, 240));
+            return;
+        }
+
+        fillRound(0.0f, PANEL_HEIGHT - 18.0f, 34.0f, 32.0f, 12.0f, argb(primary, 225));
+        fillRound(8.0f, PANEL_HEIGHT - 30.0f, 16.0f, 22.0f, 7.0f, argb(primary, 235));
+        for (int i = 0; i < 3; i++) {
+            fillRound(30.0f, PANEL_HEIGHT - 14.0f + i * 7.0f, 14.0f, 5.0f, 2.0f, argb(secondary, 220));
+        }
     }
 
     private static void drawPanel(NanoHudConfig hud, Minecraft mc, double time, boolean editor) {
@@ -379,11 +438,11 @@ public final class NanoHudRenderer {
         NanoHudConfig hud = NanoHudConfig.get();
         double speed = Math.max(0.15, hud.wingSpeed);
         double amplitude = Math.max(0.1, hud.wingAmplitude);
-        float flap = animations
-            ? (float) Math.sin(time * 6.5 * speed) * 2.4f * (float) amplitude
-            : 0.0f;
 
         for (int side = -1; side <= 1; side += 2) {
+            float flap = animations
+                ? (float) Math.sin(time * 6.5 * speed + side * 0.7) * 2.4f * (float) amplitude
+                : 0.0f;
             for (int i = 0; i < 3; i++) {
                 float rootX = 40.0f + side * 10.0f;
                 float rootY = top + 19.0f;
