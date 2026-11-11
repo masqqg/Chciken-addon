@@ -80,9 +80,11 @@ public final class NanoVg {
         GlStateManager._viewport(0, 0, target.width, target.height);
         GL33C.glBindSampler(0, 0);
 
-        nvgBeginFrame(vg, target.width, target.height, dpr);
+        // NanoVG coordinates must equal GUI coordinates: the frame size is the GUI
+        // size and the device pixel ratio does the scaling to real pixels.
+        nvgBeginFrame(vg, guiWidth, guiHeight, dpr);
         nvgTextAlign(vg, NVG_ALIGN_LEFT | NVG_ALIGN_TOP);
-        return true;
+        return font != -1;
     }
 
     public static void end() {
