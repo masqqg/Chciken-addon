@@ -110,6 +110,13 @@ public final class NanoHudRenderer {
             }
 
             Minecraft mc = Minecraft.getInstance();
+
+            if (key == hud.guiKey) {
+                if (mc.screen instanceof ChickenGuiScreen) mc.screen.onClose();
+                else ClientMenu.openModulesGui(mc);
+                return;
+            }
+
             if (key == hud.settingsKey && mc.screen == null) ClientMenu.openHudScreen(mc);
         } catch (Throwable ignored) {
             // A key handler must never break input.
@@ -126,7 +133,7 @@ public final class NanoHudRenderer {
             if (NanoHudFallback.hitHudChip(mouseX, mouseY, panelX, panelY, scale)) {
                 ClientMenu.openHudScreen(mc);
             } else if (NanoHudFallback.hitGuiChip(mouseX, mouseY, panelX, panelY, scale)) {
-                ClientMenu.openMeteorGui(mc);
+                ClientMenu.openModulesGui(mc);
             }
         }
 

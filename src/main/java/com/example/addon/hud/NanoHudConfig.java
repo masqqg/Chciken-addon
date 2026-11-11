@@ -37,6 +37,10 @@ public final class NanoHudConfig {
     public int editorKey = GLFW.GLFW_KEY_RIGHT_SHIFT;
     public int toggleKey = GLFW.GLFW_KEY_F7;
     public int settingsKey = GLFW.GLFW_KEY_P;
+    // The client's own module GUI. Right shift is what people expect from a
+    // client menu, and this addon opens its GUI after Meteor's handler has
+    // already run, so right shift ends up on the Chicken GUI.
+    public int guiKey = GLFW.GLFW_KEY_RIGHT_SHIFT;
     public int backgroundAlpha = 205;
 
     public boolean showPlayer = true;
@@ -137,6 +141,7 @@ public final class NanoHudConfig {
         editorKey = integer(properties, "editor-key", editorKey);
         toggleKey = integer(properties, "toggle-key", toggleKey);
         settingsKey = integer(properties, "settings-key", settingsKey);
+        guiKey = integer(properties, "gui-key", guiKey);
 
         // The settings menu moved from F8 to P; migrate existing configs once.
         if (settingsKey == GLFW.GLFW_KEY_F8) {
@@ -180,6 +185,7 @@ public final class NanoHudConfig {
         properties.setProperty("editor-key", Integer.toString(editorKey));
         properties.setProperty("toggle-key", Integer.toString(toggleKey));
         properties.setProperty("settings-key", Integer.toString(settingsKey));
+        properties.setProperty("gui-key", Integer.toString(guiKey));
         properties.setProperty("background-alpha", Integer.toString(backgroundAlpha));
         properties.setProperty("show-player", Boolean.toString(showPlayer));
         properties.setProperty("show-watermark", Boolean.toString(showWatermark));

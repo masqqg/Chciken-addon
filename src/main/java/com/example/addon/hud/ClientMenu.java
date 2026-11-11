@@ -1,17 +1,17 @@
 package com.example.addon.hud;
 
 import com.example.addon.AddonTemplate;
-import meteordevelopment.meteorclient.gui.GuiThemes;
-import meteordevelopment.meteorclient.gui.tabs.Tabs;
 import net.minecraft.client.Minecraft;
 
 /**
- * Opens the two Chicken Client menus.
+ * Opens the Chicken Client menus.
  *
- * <p>On phones (PojavLauncher and friends) there is no right shift key, so the
- * Meteor GUI could never be opened and the touch keyboard usually does not feed
- * GLFW's key state either. Both menus are therefore reachable by tapping the
- * chips on the HUD as well as by their keybinds.</p>
+ * <p>Both menus belong to this addon: the HUD settings screen and the module
+ * GUI. Neither uses Meteor's GUI theme, widgets or screens, so the client has
+ * its own interface instead of Meteor's right-shift GUI.</p>
+ *
+ * <p>On phones there is no right shift key, so both screens are also reachable
+ * by tapping the chips on the HUD.</p>
  */
 public final class ClientMenu {
     private ClientMenu() {
@@ -30,14 +30,15 @@ public final class ClientMenu {
         });
     }
 
-    /** Meteor's own module GUI (normally right shift). */
-    public static void openMeteorGui(Minecraft mc) {
+    /** The Chicken Client module GUI. */
+    public static void openModulesGui(Minecraft mc) {
+        if (mc.screen instanceof ChickenGuiScreen) return;
+
         mc.execute(() -> {
             try {
-                if (mc.screen != null) mc.setScreen(null);
-                Tabs.get().getFirst().openScreen(GuiThemes.get());
+                mc.setScreen(new ChickenGuiScreen());
             } catch (Throwable throwable) {
-                AddonTemplate.LOG.warn("Could not open the Meteor GUI", throwable);
+                AddonTemplate.LOG.warn("Could not open the Chicken module GUI", throwable);
             }
         });
     }

@@ -80,7 +80,7 @@ public final class NanoHudScreen extends Screen {
 
         button(context, "RESET POSITION", x + 228, rowY + 240, 126, 20, mouseX, mouseY);
 
-        button(context, "METEOR GUI", x + 18, y + PANEL_HEIGHT - 60, 118, 20, mouseX, mouseY);
+        button(context, "MODULES GUI", x + 18, y + PANEL_HEIGHT - 60, 118, 20, mouseX, mouseY);
         boolean modern = hud.modernFont;
         context.fill(x + 144, y + PANEL_HEIGHT - 60, x + 294, y + PANEL_HEIGHT - 40,
             modern ? YELLOW : 0xFF202630);
@@ -400,7 +400,7 @@ public final class NanoHudScreen extends Screen {
         }
 
         if (inside(mouseX, mouseY, x + 18, y + PANEL_HEIGHT - 60, 118, 20)) {
-            ClientMenu.openMeteorGui(Minecraft.getInstance());
+            ClientMenu.openModulesGui(Minecraft.getInstance());
             return true;
         }
         if (inside(mouseX, mouseY, x + 144, y + PANEL_HEIGHT - 60, 150, 20)) {
