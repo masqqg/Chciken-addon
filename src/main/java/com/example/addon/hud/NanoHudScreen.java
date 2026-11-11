@@ -124,7 +124,8 @@ public final class NanoHudScreen extends Screen {
         }
 
         if (hud.showPlayer) {
-            drawPlayerCard(context, mc, player, mx + 7, contentTop + 2, mw - 14, primary, secondary);
+            drawPlayerCard(context, player, mx + 7, contentTop + 2, mw - 14,
+                primary, secondary, accent, time, animated);
             contentTop += 48;
         }
 
@@ -154,29 +155,61 @@ public final class NanoHudScreen extends Screen {
         context.fill(x + 7, y + 3, x + 14, y + 5, 0x77FFFFFF);
     }
 
-    private void drawPlayerCard(GuiGraphics context, Minecraft mc, LocalPlayer player,
-                                int x, int y, int width, int primary, int secondary) {
+    private void drawPlayerCard(GuiGraphics context, LocalPlayer player,
+                                int x, int y, int width, int primary, int secondary, int accent,
+                                double time, boolean animated) {
         float health = player == null ? 20.0f : player.getHealth();
         float maxHealth = player == null ? 20.0f : Math.max(1.0f, player.getMaxHealth());
         float healthRatio = Math.max(0.0f, Math.min(1.0f, health / maxHealth));
         int armor = player == null ? 0 : player.getArmorValue();
         String name = player == null ? "Player" : player.getName().getString();
 
+        int bob = animated ? (int) Math.round(Math.sin(time * 2.2)) : 0;
+        int sway = animated ? (int) Math.round(Math.sin(time * 1.35)) : 0;
+        int aura = animated ? 38 + (int) (26 * (0.5 + 0.5 * Math.sin(time * 2.8))) : 38;
+        boolean blink = animated && (time % 4.2) > 4.05;
+
+        // Soft pulsing aura behind the whole player card.
+        context.fill(x - 1, y - 1, x + width + 1, y + 45, color(primary, aura));
+        context.fill(x, y, x + width, y + 44, 0x99151C26);
+
+        // Avatar: breath, head sway, blink and tiny orbiting yellow sparks.
         context.fill(x, y, x + 18, y + 18, 0xFF26303D);
         context.fill(x + 1, y + 1, x + 17, y + 17, color(primary, 55));
-        context.fill(x + 6, y + 5, x + 12, y + 13, 0xFFF5EFE0);
-        context.fill(x + 4, y + 12, x + 14, y + 17, 0xFFF5EFE0);
+        context.fill(x + 6 + sway, y + 4 + bob, x + 12 + sway, y + 11 + bob, 0xFFF5EFE0);
+        context.fill(x + 4, y + 10 + bob, x + 14, y + 17 + bob, 0xFFF5EFE0);
+        if (blink) {
+            context.fill(x + 7 + sway, y + 7 + bob, x + 11 + sway, y + 8 + bob, 0xFF23201A);
+        }
+        else {
+            context.fill(x + 7 + sway, y + 7 + bob, x + 8 + sway, y + 8 + bob, 0xFF23201A);
+            context.fill(x + 10 + sway, y + 7 + bob, x + 11 + sway, y + 8 + bob, 0xFF23201A);
+        }
+        if (animated) {
+            for (int i = 0; i < 4; i++) {
+                double angle = time * 1.4 + i * Math.PI / 2.0;
+                int sx = x + 9 + (int) Math.round(Math.cos(angle) * 11.0);
+                int sy = y + 9 + (int) Math.round(Math.sin(angle) * 11.0);
+                context.fill(sx, sy, sx + 1, sy + 1, color(primary, 125));
+            }
+        }
 
         context.drawString(font, name, x + 24, y + 1, TEXT, false);
-        context.drawString(font, "LOCAL PLAYER", x + 24, y + 11, MUTED, false);
+        int nameWidth = font.width(name);
+        int underline = animated
+            ? (int) (Math.max(10, nameWidth) * (0.58 + 0.42 * (0.5 + 0.5 * Math.sin(time * 2.4))))
+            : Math.max(10, nameWidth);
+        context.fill(x + 24, y + 11, x + 24 + underline, y + 12, color(primary, 165));
+        context.drawString(font, "LOCAL PLAYER", x + 24, y + 14, MUTED, false);
 
         int barX = x + 24;
         int barW = Math.max(26, width - 70);
-        previewBar(context, barX, y + 23, barW, 4, healthRatio, color(primary, 235), 0xFF202B37);
-        previewBar(context, barX, y + 30, barW, 3, Math.min(1.0f, armor / 20.0f), color(secondary, 225), 0xFF202B37);
+        int healthAlpha = animated ? 205 + (int) (30 * (0.5 + 0.5 * Math.sin(time * 4.0))) : 235;
+        previewBar(context, barX, y + 23, barW, 4, healthRatio, color(primary, healthAlpha), 0xFF202B37, time, animated);
+        previewBar(context, barX, y + 30, barW, 3, Math.min(1.0f, armor / 20.0f), color(secondary, 225), 0xFF202B37, time, animated);
         float xp = player == null ? 0.0f : player.experienceProgress;
-        previewBar(context, barX, y + 36, barW, 2, xp, color(0xFFF3D0, 220), 0xFF202B37);
-        context.drawString(font, String.format(Locale.ROOT, "%.1f", health), x + width - 25, y + 21, color(0xFFFFE082, 230), false);
+        previewBar(context, barX, y + 36, barW, 2, xp, color(accent, 220), 0xFF202B37, time, animated);
+        context.drawString(font, String.format(Locale.ROOT, "%.1f", health), x + width - 25, y + 21, color(accent, 230), false);
         context.drawString(font, "HP", x + width - 25, y + 30, MUTED, false);
     }
 
@@ -206,10 +239,16 @@ public final class NanoHudScreen extends Screen {
     }
 
     private void previewBar(GuiGraphics context, int x, int y, int width, int height,
-                            float ratio, int fill, int background) {
+                            float ratio, int fill, int background, double time, boolean animated) {
         context.fill(x, y, x + width, y + height, background);
         int filled = Math.round(width * Math.max(0.0f, Math.min(1.0f, ratio)));
-        if (filled > 0) context.fill(x, y, x + filled, y + height, fill);
+        if (filled <= 0) return;
+
+        context.fill(x, y, x + filled, y + height, fill);
+        if (animated) {
+            int shine = x + (int) ((time * 38.0) % Math.max(1, filled));
+            context.fill(shine, y, Math.min(x + filled, shine + 7), y + height, 0x66FFF7DA);
+        }
     }
 
     private void toggle(GuiGraphics context, String label, boolean value, int x, int y, int mouseX, int mouseY) {
