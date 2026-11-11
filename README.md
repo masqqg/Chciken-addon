@@ -10,7 +10,7 @@ Chicken Client is a Meteor Client addon for Minecraft 1.21.11.
 - **Free Look** - independent camera look with an optional through-walls mode.
 - **Block ESP** - configurable block scanner with boxes and tracers.
 - **Storage ESP** - container detection with block-entity debug and chunk data readouts.
-- **Watermark** - animated CC/X Chicken Client branding.
+- **Watermark HUD** - auto-loaded, draggable cloud logo with breathing glow, lightning, rain, motion blur, particles and a wave wordmark. Configure it from the HUD editor.
 - ClusterBypass, BaseFinder, PlayerFinder, SpawnerFlag, ClearRender and Storage ESP utilities.
 
 ## Build
