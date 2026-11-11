@@ -5,6 +5,7 @@ import com.chicken.client.core.Module;
 import com.chicken.client.core.ModuleManager;
 import com.chicken.client.gui.ClickGuiScreen;
 import com.chicken.client.modules.BlockESP;
+import com.chicken.client.modules.CosmicSky;
 import com.chicken.client.modules.FreeLook;
 import com.chicken.client.modules.Freecam;
 import com.chicken.client.modules.Fullbright;
@@ -58,6 +59,7 @@ public final class ChickenClient implements ClientModInitializer {
         modules.register(new Freecam());
         modules.register(new FreeLook());
         modules.register(new BlockESP());
+        modules.register(new CosmicSky());
 
         config.load();
 

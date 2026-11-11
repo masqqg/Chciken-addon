@@ -12,7 +12,8 @@
     "ChickenGameRendererMixin",
     "ChickenHudMixin",
     "ChickenRenderMixin",
-    "TitleScreenMixin"
+    "TitleScreenMixin",
+    "ChickenSkyMixin"
   ],
   "injectors": {
     "defaultRequire": 1
