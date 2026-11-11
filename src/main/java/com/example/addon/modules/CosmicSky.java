@@ -89,19 +89,19 @@ public class CosmicSky extends Module {
 
     private final Setting<SettingColor> primary = sgLook.add(new ColorSetting.Builder()
         .name("primary")
-        .defaultValue(new SettingColor(95, 150, 255))
+        .defaultValue(new SettingColor(255, 196, 0))
         .build()
     );
 
     private final Setting<SettingColor> secondary = sgLook.add(new ColorSetting.Builder()
         .name("secondary")
-        .defaultValue(new SettingColor(255, 75, 150))
+        .defaultValue(new SettingColor(255, 138, 0))
         .build()
     );
 
     private final Setting<SettingColor> auroraColor = sgLook.add(new ColorSetting.Builder()
         .name("aurora-color")
-        .defaultValue(new SettingColor(80, 255, 190))
+        .defaultValue(new SettingColor(255, 220, 70))
         .build()
     );
 

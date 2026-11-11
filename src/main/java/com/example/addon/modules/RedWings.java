@@ -94,7 +94,7 @@ public class RedWings extends Module {
 
     private final Setting<SettingColor> secondary = sgLook.add(new ColorSetting.Builder()
         .name("secondary")
-        .defaultValue(new SettingColor(255, 160, 60))
+        .defaultValue(new SettingColor(255, 196, 0))
         .build()
     );
 

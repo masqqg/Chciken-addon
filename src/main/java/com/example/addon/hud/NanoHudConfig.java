@@ -31,6 +31,7 @@ public final class NanoHudConfig {
     public double scale = 1.0;
     public int editorKey = GLFW.GLFW_KEY_RIGHT_SHIFT;
     public int toggleKey = GLFW.GLFW_KEY_F7;
+    public int settingsKey = GLFW.GLFW_KEY_F8;
     public int backgroundAlpha = 205;
 
     public boolean showPlayer = true;
@@ -38,9 +39,10 @@ public final class NanoHudConfig {
     public boolean showStats = true;
     public boolean animations = true;
 
-    public int primary = 0x00DCFF;
-    public int secondary = 0xFF375F;
-    public int accent = 0xFFC440;
+    // Chicken Client's main brand color is yellow.
+    public int primary = 0xFFC400;
+    public int secondary = 0xFF8A00;
+    public int accent = 0xFFF3D0;
 
     public final long openedAt = System.currentTimeMillis();
 
@@ -123,6 +125,7 @@ public final class NanoHudConfig {
         scale = decimal(properties, "scale", scale);
         editorKey = integer(properties, "editor-key", editorKey);
         toggleKey = integer(properties, "toggle-key", toggleKey);
+        settingsKey = integer(properties, "settings-key", settingsKey);
         backgroundAlpha = integer(properties, "background-alpha", backgroundAlpha);
         showPlayer = bool(properties, "show-player", showPlayer);
         showWatermark = bool(properties, "show-watermark", showWatermark);
@@ -131,6 +134,15 @@ public final class NanoHudConfig {
         primary = color(properties, "primary", primary);
         secondary = color(properties, "secondary", secondary);
         accent = color(properties, "accent", accent);
+
+        // Migrate the old cyan/pink defaults so existing installs pick up the
+        // yellow Chicken Client brand color automatically.
+        if (primary == 0x00DCFF && secondary == 0xFF375F) {
+            primary = 0xFFC400;
+            secondary = 0xFF8A00;
+            accent = 0xFFF3D0;
+            save();
+        }
     }
 
     public void save() {
@@ -141,6 +153,7 @@ public final class NanoHudConfig {
         properties.setProperty("scale", Double.toString(scale));
         properties.setProperty("editor-key", Integer.toString(editorKey));
         properties.setProperty("toggle-key", Integer.toString(toggleKey));
+        properties.setProperty("settings-key", Integer.toString(settingsKey));
         properties.setProperty("background-alpha", Integer.toString(backgroundAlpha));
         properties.setProperty("show-player", Boolean.toString(showPlayer));
         properties.setProperty("show-watermark", Boolean.toString(showWatermark));

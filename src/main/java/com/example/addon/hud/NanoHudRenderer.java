@@ -85,6 +85,7 @@ public final class NanoHudRenderer {
     private static double dragOffsetX;
     private static double dragOffsetY;
     private static boolean toggleHeld;
+    private static boolean settingsHeld;
     private static boolean scaleDownHeld;
     private static boolean scaleUpHeld;
 
@@ -98,6 +99,12 @@ public final class NanoHudRenderer {
         boolean toggle = keyDown(mc, hud.toggleKey);
         if (toggle && !toggleHeld) hud.toggle();
         toggleHeld = toggle;
+
+        boolean settings = keyDown(mc, hud.settingsKey);
+        if (settings && !settingsHeld && !(mc.screen instanceof NanoHudScreen)) {
+            mc.execute(() -> mc.setScreen(new NanoHudScreen()));
+        }
+        settingsHeld = settings;
 
         if (!hud.enabled) return;
         if (mc.level == null || mc.player == null || mc.getWindow().isIconified()) return;
@@ -400,8 +407,8 @@ public final class NanoHudRenderer {
         line(PANEL_WIDTH - p - len, PANEL_HEIGHT - p, PANEL_WIDTH - p, PANEL_HEIGHT - p, 2.0f, argb(primary, 235));
         line(PANEL_WIDTH - p, PANEL_HEIGHT - p - len, PANEL_WIDTH - p, PANEL_HEIGHT - p, 2.0f, argb(primary, 235));
 
-        fillRound(14.0f, PANEL_HEIGHT - 30.0f, 174.0f, 14.0f, 7.0f, argb(0, 0, 0, 170));
-        text("RSHIFT + DRAG  •  [ ] SCALE  •  F7 HIDE", 20.0f, PANEL_HEIGHT - 27.0f, 6.2f, argb(230, 240, 255, 220));
+        fillRound(14.0f, PANEL_HEIGHT - 30.0f, 234.0f, 14.0f, 7.0f, argb(0, 0, 0, 170));
+        text("RSHIFT + DRAG  •  [ ] SCALE  •  F7 HIDE  •  F8 SETTINGS", 20.0f, PANEL_HEIGHT - 27.0f, 6.2f, argb(230, 240, 255, 220));
     }
 
     private static void bar(float x, float y, float width, float height, float fill,
