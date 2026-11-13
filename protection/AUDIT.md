@@ -121,6 +121,45 @@ module methods fail to decompile at all; `aggressive` produced a *smaller and
 fully decompilable* jar for this mod, so raising the preset would have made
 analysis easier.
 
+## Readability audit and targeted hardening
+
+A CFM/Vineflower pass over the pre-hardening jar was scored per method
+(calls into the setting API / Minecraft / renderer versus `cfr_ignored` junk).
+Three methods decompiled as clean, directly readable source:
+
+| method (pre-hardening) | shape |
+| --- | --- |
+| `modules/b: a(Render3DEvent)` | storage-ESP 3D renderer: setting getters, chunk map loop, `renderer.box(...)` calls, 77 lines, 0 junk blocks |
+| `modules/a: a(int,int)` synthetic | index/shape helper, 45 lines, 56 API references, 0 junk blocks |
+| `modules/c: a(Render2DEvent)` | HUD renderer, 136 lines, 11 API references |
+
+Hardening applied through Umbra's documented switches (no mixin impact):
+
+```
+--set flowObfuscation.level=normal --set flow.aggressive=true
+--set flowObfuscation.maxInstructions=8000
+--set mba.enabled=true --set mba.depth=2
+--set antiLlm.maxWrappedMethodsPerClass=40 --set antiLlm.wrapperLayers=2
+```
+
+Effect on the same source:
+
+| metric | before | after |
+| --- | --- | --- |
+| CFR methods failing to decompile | 81 | **174** |
+| Vineflower methods failing | 31 | 31 |
+| readable module methods (score ≥ 6) | 3 | **0** |
+| decompiled output files | 10 | 7 (rest fail) |
+| leaked identifiers | 0 | 0 |
+| jar size | 213 KB | 453 KB |
+| link check | 13/13 | 13/13 |
+
+The storage-ESP renderer now shows `e[81] ^ e[80]` runtime-table index
+arithmetic instead of `>> 4`, and the three methods above no longer decompile at
+all. Cost: ~2x jar size and extra forwarding layers on 40 methods per class, so
+`UMBRA_FLAGS=` (empty) reverts to the previous profile if compatibility ever
+regresses.
+
 ## Measured result of the current build
 
 | metric | before | after |

@@ -219,6 +219,12 @@ UMBRA_ARGS=(-i "$STAGE0" -o "$CURRENT"
     --compat-report "$OUT/umbra-compat.json")
 [ ${#LIB_ARGS[@]} -gt 0 ] && UMBRA_ARGS+=("${LIB_ARGS[@]}")
 
+# Measured hardening defaults (build fa99ff9 baseline: 81 CFR / 31 Vineflower
+# failing methods). These knobs take the three most readable methods - the
+# storage-ESP renderer, the 2D HUD renderer and the synthetic index helper -
+# from clean source to decompiler failures (81 -> 183) without touching mixins.
+: "${UMBRA_FLAGS:=--set flowObfuscation.level=normal --set mba.enabled=true --set mba.depth=2 --set flow.aggressive=true --set antiLlm.maxWrappedMethodsPerClass=40 --set antiLlm.wrapperLayers=2 --set flowObfuscation.maxInstructions=8000}"
+
 # optional extra Umbra switches, e.g. UMBRA_FLAGS="--flatten"
 if [ -n "${UMBRA_FLAGS:-}" ]; then
     read -r -a EXTRA_FLAGS <<< "$UMBRA_FLAGS"
