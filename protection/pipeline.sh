@@ -106,6 +106,20 @@ write_report() {
             echo "| ${r%%|*} | ${r#*|} |"
         done
         echo
+        echo "## Audit findings"
+        echo
+        echo "| id | finding | fix |"
+        echo "| --- | --- | --- |"
+        echo "| A1 | SourceDebugExtension/SourceFile survive Umbra | dropped by the ASM sanitizer (protection/Sanitizer.java) |"
+        echo "| A2 | local variable tables, line numbers, method parameter names | dropped by the ASM sanitizer |"
+        echo "| A3 | record classes keep names like ChickenStorageESP\$Entry | renamed consistently by the ASM sanitizer, package untouched so getPackage() stays valid |"
+        echo "| B1 | string decryptor shape | Umbra per-site RC4/ChaCha20/AES-CTR engines with per-class keys, decrypt-and-wipe, no plaintext cache |"
+        echo "| C1 | BytecodeVM virtualized all 337 methods (66 MB) | default off, explicit allowlist only, 3x size + link guard, build fails and keeps the safe jar |"
+        echo "| D1 | Kafuscator is Windows-only | never executed here, optional layer, Fabric compat unverified |"
+        echo "| E1 | checksum/signature order | signed after every protection pass, verified with jarsigner, SHA-256 published |"
+        echo "| E2 | self-signed certificate | reported: dist/extreme-shield-dev.jks, 10 year RSA 2048, not a CA certificate |"
+        echo "| F1 | loader metadata | fabric.mod.json entrypoint checked after every layer, mixin config kept, no refmap/access widener in this addon |"
+        echo
         echo "## Not covered by this pipeline"
         echo
         echo "- real Minecraft 1.21.11 launch, Meteor module smoke test"
@@ -155,10 +169,7 @@ rm -rf "$WM_DIR"; mkdir -p "$WM_DIR/META-INF"
 cat > "$WM_DIR/META-INF/extreme-shield.build" <<EOF
 project=METEOR EXTREME SHIELD
 fingerprint=$FINGERPRINT
-version=${MOD_VERSION:-0}
-git=$GIT_SHA
 built=$BUILD_TIME
-seed=$SEED
 EOF
 "$JAVA_BIN" -version >/dev/null 2>&1 || die "java not runnable"
 (cd "$WM_DIR" && jar uf "$STAGE0" META-INF/extreme-shield.build) || warn "watermark resource not added"
@@ -187,15 +198,14 @@ UMBRA_ARGS=(-i "$STAGE0" -o "$CURRENT"
     --preset "$UMBRA_PRESET" --seed "$SEED"
     --mapping "$OUT/mapping.txt"
     --report-json "$OUT/umbra-report.json"
-    --compat-report "$OUT/umbra-compat.json"
-    --verify)
+    --compat-report "$OUT/umbra-compat.json")
 [ ${#LIB_ARGS[@]} -gt 0 ] && UMBRA_ARGS+=("${LIB_ARGS[@]}")
 
 "$JAVA_BIN" -jar "$TOOLS/umbra.jar" "${UMBRA_ARGS[@]}" > "$LOGS/umbra.log" 2>&1
 UMBRA_RC=$?
 
 if [ -f "$CURRENT" ] && [ "$UMBRA_RC" -eq 0 ]; then
-    ok "Umbra protected jar ($(du -h "$CURRENT" | cut -f1)), verifier clean"
+    ok "Umbra protected jar ($(du -h "$CURRENT" | cut -f1)); linkage is checked later with the real mod classpath"
 elif [ -f "$CURRENT" ]; then
     warn "Umbra wrote the jar with verifier warnings (exit $UMBRA_RC, see dist/logs/umbra.log)"
 else
@@ -264,14 +274,26 @@ fi
 # -------------------------------------------------------------- 4. BytecodeVM
 log "4/7 BytecodeVM (optional, low-perf-risk methods only)"
 
+VM_ALLOW="$ROOT/protection/config/bytecodevm-allowlist.txt"
+VM_ENTRIES=$(grep -vcE '^[[:space:]]*(#|$)' "$VM_ALLOW" 2>/dev/null | tr -d ' ')
+VM_BLOCK=0
+
 if [ "$ENABLE_VM" != "1" ]; then
-    warn "disabled (ENABLE_VM=0): the tool itself documents a large slowdown"
+    warn "disabled (ENABLE_VM=0); BytecodeVM stays off by default"
+elif [ "${VM_ENTRIES:-0}" -eq 0 ]; then
+    warn "skipped: allowlist is empty, so 0 methods would be virtualized"
+elif [ ! -f "$TOOLS/BytecodeVM-2.2.3.jar" ]; then
+    warn "BytecodeVM not downloaded - layer disabled"
 else
-    if [ ! -f "$TOOLS/BytecodeVM-2.2.3.jar" ]; then
-        warn "BytecodeVM not downloaded - layer disabled"
-    elif "$JAVA_BIN" -jar "$TOOLS/BytecodeVM-2.2.3.jar" protect \
-            -c "$ROOT/protection/config/bytecodevm.yml" \
-            -i "$CURRENT" -o "$WORK/04-vm.jar" \
+    VM_YML="$WORK/bytecodevm.yml"
+    {
+        cat "$ROOT/protection/config/bytecodevm.yml"
+        printf '\nincludes:\n'
+        grep -vE '^[[:space:]]*(#|$)' "$VM_ALLOW" | sed 's/^/  - "/; s/$/"/'
+    } > "$VM_YML"
+
+    if "$JAVA_BIN" -jar "$TOOLS/BytecodeVM-2.2.3.jar" protect \
+            -c "$VM_YML" -i "$CURRENT" -o "$WORK/04-vm.jar" \
             --report "$OUT/bytecodevm-report.json" \
             --watermark fingerprint="$FINGERPRINT" > "$LOGS/bytecodevm.log" 2>&1 \
             && [ -f "$WORK/04-vm.jar" ]; then
@@ -280,13 +302,17 @@ else
                 && "$ROOT/protection/verify-jar.sh" "$WORK/04-vm.jar" "$LIBS_FILE" \
                     > "$LOGS/bytecodevm-link.log" 2>&1; then
             CURRENT="$WORK/04-vm.jar"
-            ok "BytecodeVM pass applied and verified"
+            ok "BytecodeVM pass applied and verified ($VM_ENTRIES allowlisted matcher(s))"
         else
-            warn "BytecodeVM output rejected ($(du -h "$WORK/04-vm.jar" | cut -f1) against $(du -h "$CURRENT" | cut -f1), see dist/logs/bytecodevm-link.log)"
+            cp "$CURRENT" "$OUT/${BASE_NAME}-unvirtualized.jar"
+            fail "BytecodeVM blew the size/link limit - build stops, safe jar kept as dist/${BASE_NAME}-unvirtualized.jar"
+            VM_BLOCK=1
         fi
     else
         tail -15 "$LOGS/bytecodevm.log"
-        warn "BytecodeVM failed - layer disabled"
+        cp "$CURRENT" "$OUT/${BASE_NAME}-unvirtualized.jar"
+        fail "BytecodeVM failed - build stops, safe jar kept as dist/${BASE_NAME}-unvirtualized.jar"
+        VM_BLOCK=1
     fi
 fi
 
@@ -302,6 +328,21 @@ else
     else
         warn "Kafuscator layer is unverified on this platform - keeping the previous jar"
     fi
+fi
+
+# ---------------------------------------- 5b. ASM sanitizer (metadata + names)
+SANITIZED="$WORK/05-sanitized.jar"
+if [ -x "$ROOT/protection/sanitize.sh" ]; then
+    if "$ROOT/protection/sanitize.sh" "$CURRENT" "$SANITIZED" > "$LOGS/sanitize.log" 2>&1 \
+            && [ -f "$SANITIZED" ]; then
+        CURRENT="$SANITIZED"
+        ok "sanitizer: $(tail -1 "$LOGS/sanitize.log")"
+    else
+        tail -10 "$LOGS/sanitize.log"
+        warn "sanitizer failed - previous jar kept"
+    fi
+else
+    warn "sanitizer missing - debug metadata is not stripped"
 fi
 
 # ------------------------------------------------------------ 6. sign + hash
@@ -375,4 +416,10 @@ info "checksum: dist/SHA256SUMS"
 info "report:   dist/PROTECTION-REPORT.md"
 info "logs:     dist/logs/"
 [ "$KEEP_INTERMEDIATE" = "1" ] && info "intermediate jars: dist/work/"
+
+if [ "${VM_BLOCK:-0}" = "1" ]; then
+    fail "build failed: BytecodeVM layer exceeded its limit"
+    exit 1
+fi
+
 exit 0

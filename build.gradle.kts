@@ -67,6 +67,8 @@ tasks {
     register("protectionLibs") {
         group = "build"
         description = "Writes the jar classpath used by the protection pipeline."
+        // The remapped mod jars live in build/loom-cache only after remapJar ran.
+        dependsOn("remapJar")
 
         val outFile = layout.buildDirectory.file("protection-libs.txt")
         outputs.file(outFile)

@@ -24,6 +24,11 @@ if [ ! -f aidsfuscator/v2.10.0/aidsfuscator.jar ]; then
         && unzip -oq aids.zip -d aidsfuscator && rm -f aids.zip
 fi
 
+# --- ASM used by the sanitizer pass ----------------------------------------
+get "https://repo1.maven.org/maven2/org/ow2/asm/asm/9.8/asm-9.8.jar" asm-9.8.jar || exit 1
+get "https://repo1.maven.org/maven2/org/ow2/asm/asm-commons/9.8/asm-commons-9.8.jar" asm-commons-9.8.jar || exit 1
+get "https://repo1.maven.org/maven2/org/ow2/asm/asm-tree/9.8/asm-tree-9.8.jar" asm-tree-9.8.jar || exit 1
+
 # --- decompilers used by decompile-compare.sh ------------------------------
 get "https://github.com/leibnitz27/cfr/releases/download/0.152/cfr-0.152.jar" cfr-0.152.jar || true
 get "https://github.com/Vineflower/vineflower/releases/download/1.12.0/vineflower-1.12.0.jar" vineflower-1.12.0.jar || true

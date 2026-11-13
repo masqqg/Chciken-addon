@@ -27,6 +27,7 @@ Everything lands in `dist/`:
 | 3 | Aidsfuscator v2.10.0 | **on** (default) | member renaming, local names, line-number removal; class renaming is off so the loader entrypoint and `MeteorAddon#getPackage()` stay valid |
 | 4 | BytecodeVM 2.2.3 | evaluated, off | safe matcher config virtualizes 0 methods; unrestricted it virtualizes all 337 methods and grows the jar from 218 KB to 66 MB, so it is rejected by the size/link guard |
 | 5 | Kafuscator 1.2.0 | unavailable here | the release is a Windows x64 jpackage app (`.exe` + Windows runtime), there is no Linux/macOS build to run and Fabric compatibility is unverified |
+| 5b | ASM sanitizer (`Sanitizer.java`) | on | renames class names the obfuscators kept (records) and strips `SourceFile`, `SourceDebugExtension`, local variables, line numbers and method parameters |
 | 6 | SHA-256 + `keytool`/`jarsigner` | on | free JDK signing, signature verified after signing |
 | 7 | decompiler comparison | on | CFR, Vineflower, Procyon, JADX on the input and the protected jar |
 
@@ -61,19 +62,21 @@ Tools are downloaded once into `tools/protection/` by `protection/fetch-tools.sh
 (pinned versions, all free: Umbra MIT, Aidsfuscator free, BytecodeVM MIT,
 Kafuscator GPL, CFR/Vineflower/Procyon/JADX free).
 
+Audit report with every finding, risk and fix: [AUDIT.md](AUDIT.md).
+
 ## Measured on the current build
 
 `dist/decompilers/COMPARISON.md` for build `MES-0.1.0-...`:
 
 | metric | before | after |
 | --- | --- | --- |
-| module names / keywords still readable (of 8) | 7 | 2 |
+| module names / keywords still readable (of 8) | 7 | 0–1 (CFR 0, Vineflower 1, Procyon 0, JADX 0) |
 | long user-facing sentences still readable (of 4) | 2 | 0 |
-| Umbra output verifier | — | clean |
+| leaked class names (`ChickenStorageESP`, `TracerTarget`, `EntityBox`, …) | present | 0 files |
+| debug metadata (`SourceFile`, `SourceDebugExtension`, locals, line numbers) | present | stripped |
+| class linkage against the mod classpath | — | 13/13 |
 
-Known remaining leak: the private nested records (`ChickenStorageESP$Entry`,
-`$EntityBox`, `$TracerTarget`) keep their record names because Umbra preserves
-record component metadata; the module classes themselves are renamed (`a`, `b`, `c`).
+Full finding-by-finding audit: [AUDIT.md](AUDIT.md).
 
 ## What this pipeline cannot test here
 

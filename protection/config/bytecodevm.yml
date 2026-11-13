@@ -1,10 +1,10 @@
-# BytecodeVM settings for METEOR EXTREME SHIELD.
+# BytecodeVM base settings for METEOR EXTREME SHIELD.
 #
-# Only low-performance-risk methods may be virtualized: the tool documents a
-# large slowdown, so the layer is off by default (ENABLE_VM=1 to try it) and
-# Mixin classes, the mod entrypoint and everything on the render/tick path are
-# excluded. Umbra keeps package names, so these matchers still hit the modules
-# after the first pass.
+# The pipeline appends an `includes:` block generated from
+# bytecodevm-allowlist.txt and passes the result as the config. With an empty
+# allowlist the layer never runs, which is the safe default.
+#
+# Hot paths are always excluded no matter what the allowlist says.
 input: "./in.jar"
 output: "./out.jar"
 
@@ -15,11 +15,6 @@ interpretMode: SAVE_ONLY_REQUIRED_INSTRUCTION
 vmStructure: HIGH
 vmCount: 3
 
-# Everything is excluded by default; only the explicitly listed package is
-# eligible, and the hot paths below are excluded again.
-includes:
-  - "class:com.example.addon.modules.*"
-
 excludes:
   - "method:* void onTick(*)*"
   - "method:* void onRender(*)*"
@@ -27,10 +22,13 @@ excludes:
   - "method:* void onPacket(*)*"
   - "method:* void onActivate()*"
   - "method:* void onDeactivate()*"
+  - "method:* void onChunkData(*)*"
+  - "method:* void onBlockUpdate(*)*"
   - "class:com.example.addon.AddonTemplate"
   - "class:com.example.addon.mixin.*"
   - "class:sa.*"
-  - "class:ru.*"
+  - "class:f5.*"
+  - "class:com.google.*"
 
 watermark:
   project: "METEOR EXTREME SHIELD"

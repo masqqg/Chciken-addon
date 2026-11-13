@@ -1,0 +1,13 @@
+# BytecodeVM allowlist - one matcher per line, everything else stays untouched.
+#
+# The layer only runs when this file contains at least one entry. Classes are
+# already renamed by Umbra at this point, so match by package and by method
+# shape, never by an obfuscated class name.
+#
+# Performance rules (priority: compatibility > performance > protection):
+#   - never list tick/render/packet handlers
+#   - never list anything in the module update path
+#   - a normal entry looks like:
+#       class:com.example.addon.modules.*;method:* void *()
+#
+# Empty on purpose: the safe default is no virtualization.
