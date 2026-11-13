@@ -59,7 +59,38 @@ fun toMinecraftCompat(version: String): String {
     return version
 }
 
+val protectionClasspath = configurations.compileClasspath
+
 tasks {
+    // Writes the compile classpath for protection/pipeline.sh, which passes the
+    // jars to Umbra as --lib so its output verifier can load every class.
+    register("protectionLibs") {
+        group = "build"
+        description = "Writes the jar classpath used by the protection pipeline."
+
+        val outFile = layout.buildDirectory.file("protection-libs.txt")
+        outputs.file(outFile)
+
+        doLast {
+            // The release jar is remapped to intermediary, so the verifier needs
+            // the intermediary Minecraft jar and the remapped mod jars as well.
+            val extra = fileTree(gradle.gradleUserHomeDir.resolve("caches/fabric-loom/minecraftMaven")) {
+                include("**/minecraft-merged-intermediary-*.jar")
+            }.files + fileTree(layout.buildDirectory.dir("loom-cache/remapped_working")) {
+                include("*.jar")
+            }.files
+
+            val jars = (protectionClasspath.get().files + extra)
+                .filter { it.isFile && it.name.endsWith(".jar") }
+                .distinct()
+                .joinToString("\n") { it.absolutePath }
+
+            val file = outFile.get().asFile
+            file.parentFile.mkdirs()
+            file.writeText(jars)
+        }
+    }
+
     processResources {
         val propertyMap = mapOf(
             "version" to project.version,

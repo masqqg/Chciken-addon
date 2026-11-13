@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "id": "addon-template",
   "version": "${version}",
-  "name": "Addon Template",
-  "description": "An addon template for Meteor Client addons.",
+  "name": "Meteor Extreme Shield",
+  "description": "Storage ESP bypass, amethyst cluster bypass and clear render.",
   "authors": [
     "seasnail"
   ],

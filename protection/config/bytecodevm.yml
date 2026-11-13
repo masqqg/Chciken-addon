@@ -1,0 +1,36 @@
+# BytecodeVM settings for METEOR EXTREME SHIELD.
+#
+# Only low-performance-risk methods may be virtualized: the tool documents a
+# large slowdown, so the layer is off by default (ENABLE_VM=1 to try it) and
+# Mixin classes, the mod entrypoint and everything on the render/tick path are
+# excluded. Umbra keeps package names, so these matchers still hit the modules
+# after the first pass.
+input: "./in.jar"
+output: "./out.jar"
+
+createMode: ONE_FOR_ALL
+location: ONE_PACKAGE
+renameMode: ENABLE
+interpretMode: SAVE_ONLY_REQUIRED_INSTRUCTION
+vmStructure: HIGH
+vmCount: 3
+
+# Everything is excluded by default; only the explicitly listed package is
+# eligible, and the hot paths below are excluded again.
+includes:
+  - "class:com.example.addon.modules.*"
+
+excludes:
+  - "method:* void onTick(*)*"
+  - "method:* void onRender(*)*"
+  - "method:* void onRender3D(*)*"
+  - "method:* void onPacket(*)*"
+  - "method:* void onActivate()*"
+  - "method:* void onDeactivate()*"
+  - "class:com.example.addon.AddonTemplate"
+  - "class:com.example.addon.mixin.*"
+  - "class:sa.*"
+  - "class:ru.*"
+
+watermark:
+  project: "METEOR EXTREME SHIELD"

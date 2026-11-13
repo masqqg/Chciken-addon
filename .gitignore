@@ -31,3 +31,8 @@ bin/
 # fabric
 
 run/
+
+# protection pipeline
+
+tools/protection/
+dist/
