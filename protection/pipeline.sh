@@ -190,6 +190,24 @@ else
     warn "no library classpath (build/protection-libs.txt); verification is limited"
 fi
 
+# ------------------------------------------------- 1b. strict mixin keep set
+# Mixin classes, their helper classes and their annotations are never renamed,
+# virtualized or flow-transformed. The keep set is derived from the jar so it
+# also applies to mixins added later.
+MIXIN_KEEP_FILE="$ROOT/build/mixin-keep.txt"
+MIXIN_CLASSES_FILE="$ROOT/build/mixin-classes.txt"
+if [ -x "$ROOT/protection/mixin-keeplist.sh" ]; then
+    if "$ROOT/protection/mixin-keeplist.sh" "$STAGE0" "$ROOT/build" > "$LOGS/mixins-keeplist.log" 2>&1; then
+        ok "mixin keep set: $(tail -1 "$LOGS/mixins-keeplist.log")"
+    else
+        tail -5 "$LOGS/mixins-keeplist.log"
+        warn "mixin keep set could not be derived"
+    fi
+else
+    warn "mixin-keeplist.sh missing - mixin names are not explicitly kept"
+fi
+MIXIN_COUNT=$(grep -cvE '^[[:space:]]*$' "$MIXIN_CLASSES_FILE" 2>/dev/null | tr -d ' ')
+
 # ------------------------------------------------------------------ 2. Umbra
 log "2/7 Umbra - main engine (preset: $UMBRA_PRESET)"
 
@@ -200,6 +218,13 @@ UMBRA_ARGS=(-i "$STAGE0" -o "$CURRENT"
     --report-json "$OUT/umbra-report.json"
     --compat-report "$OUT/umbra-compat.json")
 [ ${#LIB_ARGS[@]} -gt 0 ] && UMBRA_ARGS+=("${LIB_ARGS[@]}")
+
+# every --keep line produced by mixin-keeplist.sh
+if [ -s "$MIXIN_KEEP_FILE" ]; then
+    while IFS= read -r keep; do
+        [ -n "$keep" ] && UMBRA_ARGS+=("$keep")
+    done < "$MIXIN_KEEP_FILE"
+fi
 
 "$JAVA_BIN" -jar "$TOOLS/umbra.jar" "${UMBRA_ARGS[@]}" > "$LOGS/umbra.log" 2>&1
 UMBRA_RC=$?
@@ -228,7 +253,9 @@ fi
 # ----------------------------------------------------------- 3. Aidsfuscator
 log "3/7 Aidsfuscator V2 (optional)"
 
-if [ "$ENABLE_AIDS" != "1" ]; then
+if [ "${MIXIN_COUNT:-0}" -gt 0 ] && [ "${ALLOW_AIDS_WITH_MIXINS:-0}" != "1" ]; then
+    warn "skipped: $MIXIN_COUNT mixin class(es) present, strict mixin protection keeps Aidsfuscator out"
+elif [ "$ENABLE_AIDS" != "1" ]; then
     warn "disabled (ENABLE_AIDS=0); its string/flow passes overlap Umbra"
 else
     AIDS_HOME="$TOOLS/aidsfuscator/v2.10.0"
@@ -280,6 +307,8 @@ VM_BLOCK=0
 
 if [ "$ENABLE_VM" != "1" ]; then
     warn "disabled (ENABLE_VM=0); BytecodeVM stays off by default"
+elif [ "${MIXIN_COUNT:-0}" -gt 0 ]; then
+    warn "skipped: $MIXIN_COUNT mixin class(es) present, virtualization is excluded by policy"
 elif [ "${VM_ENTRIES:-0}" -eq 0 ]; then
     warn "skipped: allowlist is empty, so 0 methods would be virtualized"
 elif [ ! -f "$TOOLS/BytecodeVM-2.2.3.jar" ]; then

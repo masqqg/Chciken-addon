@@ -34,6 +34,28 @@ Everything lands in `dist/`:
 
 Caesium is not used anywhere.
 
+## Strict mixin protection (mandatory)
+
+Mixins are never renamed, virtualized or flow-transformed, now or when they are
+added later. The pipeline enforces this every build:
+
+1. `mixin-keeplist.sh` reads the mixin configs from the jar, resolves every mixin
+   class and, by dependency analysis of their constant pool, the helper classes
+   they call. It writes exact `--keep` arguments that Umbra receives.
+2. With at least one mixin class in the jar, the Aidsfuscator and BytecodeVM
+   layers are skipped by default (`ALLOW_AIDS_WITH_MIXINS=1` overrides only the
+   first, and is not recommended).
+3. `verify-mixins.sh` compares the pre-protection jar with the protected one:
+   mixin list, config package, client/server entries, class names, declared
+   refmap, and an ASM snapshot of every class/method/field annotation value
+   (`@Mixin` targets, `@Inject`/`@Redirect`/`@ModifyArg`/`@ModifyVariable`/
+   `@Overwrite`, `@Shadow` members, `remap` flags). Any difference is fatal: the
+   pipeline stops before signing, so no release jar is produced.
+
+This addon currently declares no mixins (`addon-template.mixins.json` has an
+empty list), so the guard is a no-op today and becomes active the moment a mixin
+is added.
+
 ## Fabric safety
 
 Umbra detects the `fabric.mod.json` + mixin container and, by default for mods:

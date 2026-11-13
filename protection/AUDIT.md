@@ -56,6 +56,27 @@ post-processing pass in `protection/Sanitizer.java`.
 - Link check: all 13 classes load against the real mod classpath (`VerifyJar`, 13/13, 0 failures).
 - **In-game test: not performed.** The build machine has no Minecraft installation and no display, so a real 1.21.11 launch, mixin injection and the Clear/Render/Cluster Bypass/Storage ESP behaviour are unverified.
 
+## G. Strict mixin protection (mandatory)
+
+| # | rule | enforcement |
+| --- | --- | --- |
+| G1 | no class or method renaming on mixin classes | `mixin-keeplist.sh` derives exact `--keep` arguments for every mixin class and every helper class reachable from its constant pool; Umbra receives them on every run |
+| G2 | `@Mixin`, `@Inject`, `@Redirect`, `@ModifyArg`, `@ModifyVariable`, `@Overwrite`, `@Shadow` preserved | guard runs an ASM snapshot of every class/method/field annotation value on the pre-protection and protected jars and diffs them |
+| G3 | target class, target method and descriptors unchanged | same snapshot diff; a changed method value in `@Inject` shows up as a one-line diff |
+| G4 | config, refmap and access widener references preserved | guard checks the mixin list, config package, client/server entries and a declared refmap in the protected jar |
+| G5 | no VM virtualization or aggressive flow on mixin classes | Aidsfuscator and BytecodeVM layers are skipped automatically while the jar contains a mixin class (`ALLOW_AIDS_WITH_MIXINS=1` is the only override, off by default) |
+| G6 | release blocked on mixin failure | the guard runs before signing and calls `die`, so no signed release jar is produced |
+
+Verified with a synthetic mixin (`@Mixin(targets="net.minecraft.client.Minecraft")` + `@Inject`):
+
+- keep set generated: `com.example.addon.mixin.TestMixin`, `…TestMixin$*`
+- unchanged jar: `mixins intact`, `annotation snapshot identical for 1 mixin class(es)`, exit 0
+- renamed mixin class: `FAIL mixin class missing or renamed`, exit 1
+- changed annotation value (`method="run"` → `riN`): `FAIL mixin annotations or members changed`, exit 1
+
+The current addon still declares zero mixins, so the guard is a no-op today and
+activates automatically the moment a mixin is added.
+
 ## Measured result of the current build
 
 | metric | before | after |
