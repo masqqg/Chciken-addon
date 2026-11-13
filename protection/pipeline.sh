@@ -345,6 +345,18 @@ else
     warn "sanitizer missing - debug metadata is not stripped"
 fi
 
+# --------------------------------------------------- 5c. mixin guard (fatal)
+if [ -x "$ROOT/protection/verify-mixins.sh" ]; then
+    if "$ROOT/protection/verify-mixins.sh" "$STAGE0" "$CURRENT" > "$LOGS/mixins.log" 2>&1; then
+        ok "mixins: $(tail -1 "$LOGS/mixins.log")"
+    else
+        tail -10 "$LOGS/mixins.log"
+        die "mixin config/classes were damaged by a protection layer"
+    fi
+else
+    warn "verify-mixins.sh missing - mixin setup is unchecked"
+fi
+
 # ------------------------------------------------------------ 6. sign + hash
 log "6/7 link check + SHA-256 + signing"
 

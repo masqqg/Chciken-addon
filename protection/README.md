@@ -28,6 +28,7 @@ Everything lands in `dist/`:
 | 4 | BytecodeVM 2.2.3 | evaluated, off | safe matcher config virtualizes 0 methods; unrestricted it virtualizes all 337 methods and grows the jar from 218 KB to 66 MB, so it is rejected by the size/link guard |
 | 5 | Kafuscator 1.2.0 | unavailable here | the release is a Windows x64 jpackage app (`.exe` + Windows runtime), there is no Linux/macOS build to run and Fabric compatibility is unverified |
 | 5b | ASM sanitizer (`Sanitizer.java`) | on | renames class names the obfuscators kept (records) and strips `SourceFile`, `SourceDebugExtension`, local variables, line numbers and method parameters |
+| 5c | mixin guard (`verify-mixins.sh`) | on | compares the pre-protection jar with the output: mixin list, config package, entries, mixin class names and a declared refmap must be unchanged, otherwise the build fails |
 | 6 | SHA-256 + `keytool`/`jarsigner` | on | free JDK signing, signature verified after signing |
 | 7 | decompiler comparison | on | CFR, Vineflower, Procyon, JADX on the input and the protected jar |
 
