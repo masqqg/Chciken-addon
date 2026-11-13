@@ -219,11 +219,13 @@ UMBRA_ARGS=(-i "$STAGE0" -o "$CURRENT"
     --compat-report "$OUT/umbra-compat.json")
 [ ${#LIB_ARGS[@]} -gt 0 ] && UMBRA_ARGS+=("${LIB_ARGS[@]}")
 
-# Measured hardening defaults (build fa99ff9 baseline: 81 CFR / 31 Vineflower
-# failing methods). These knobs take the three most readable methods - the
-# storage-ESP renderer, the 2D HUD renderer and the synthetic index helper -
-# from clean source to decompiler failures (81 -> 183) without touching mixins.
-: "${UMBRA_FLAGS:=--set flowObfuscation.level=normal --set mba.enabled=true --set mba.depth=2 --set flow.aggressive=true --set antiLlm.maxWrappedMethodsPerClass=40 --set antiLlm.wrapperLayers=2 --set flowObfuscation.maxInstructions=8000}"
+# Measured hardening defaults, chosen by leave-one-out cost/benefit on build
+# ff27fbd (base profile: 213 KB, 81 CFR failing methods):
+#   antiLlm : +119 KB, +77 failures (98 -> 175)  <- keep, biggest gain
+#   mba     : +14 KB,  +3 failures (172 -> 175)  <- keep, practically free
+#   flow    : +158 KB, +6 failures (169 -> 175)  <- dropped, poor trade
+# Result: 297 KB and 169 failing methods. Set UMBRA_FLAGS to override.
+: "${UMBRA_FLAGS:=--set mba.enabled=true --set mba.depth=2 --set antiLlm.maxWrappedMethodsPerClass=40 --set antiLlm.wrapperLayers=2}"
 
 # optional extra Umbra switches, e.g. UMBRA_FLAGS="--flatten"
 if [ -n "${UMBRA_FLAGS:-}" ]; then

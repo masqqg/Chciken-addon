@@ -23,7 +23,7 @@ Everything lands in `dist/`:
 | # | layer | state | why |
 | --- | --- | --- | --- |
 | 1 | build fingerprint + watermark | on | build id, git sha, seed written into `META-INF/extreme-shield.build`; Umbra also embeds its own RSA-blind watermark |
-| 2 | **Umbra 3.4.0** | **on, required** | main engine: rename, per-site string encryption, flow hardening, anti-LLM noise, Minecraft mod-container adaptation; on top of `balanced` it runs the measured `UMBRA_FLAGS` profile (MBA depth 2, normal+aggressive flow, 8000-instruction limit, 40 wrapped methods/class). Set `UMBRA_FLAGS=` to revert to the plain preset |
+| 2 | **Umbra 3.4.0** | **on, required** | main engine: rename, per-site string encryption, flow hardening, anti-LLM noise, Minecraft mod-container adaptation; on top of `balanced` it runs the measured `UMBRA_FLAGS` profile (MBA depth 2 + 40 anti-LLM wrapped methods per class with 2 layers, the best protection-per-byte pair). Flow overrides are opt-in because they cost 158 KB for 6 extra failing methods; set `UMBRA_FLAGS` to add them |
 | 3 | Aidsfuscator v2.10.0 | **on** (default) | member renaming, local names, line-number removal; class renaming is off so the loader entrypoint and `MeteorAddon#getPackage()` stay valid |
 | 4 | BytecodeVM 2.2.3 | evaluated, off | safe matcher config virtualizes 0 methods; unrestricted it virtualizes all 337 methods and grows the jar from 218 KB to 66 MB, so it is rejected by the size/link guard |
 | 5 | Kafuscator 1.2.0 | unavailable here | the release is a Windows x64 jpackage app (`.exe` + Windows runtime), there is no Linux/macOS build to run and Fabric compatibility is unverified |

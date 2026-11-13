@@ -142,6 +142,37 @@ Hardening applied through Umbra's documented switches (no mixin impact):
 --set antiLlm.maxWrappedMethodsPerClass=40 --set antiLlm.wrapperLayers=2
 ```
 
+### Cost / benefit per knob (leave-one-out on build `ff27fbd`)
+
+| profile | jar | CFR failing methods | per-knob cost |
+| --- | --- | --- | --- |
+| base `balanced` | 213 KB | 81 | - |
+| + anti-LLM wrappers only (40/class, 2 layers) | 336 KB | 98 | +119 KB, **+77** |
+| + MBA only (depth 2) | 227 KB | 84 | +14 KB, +3 |
+| + MBA + anti-LLM (**adopted**) | 297 KB | **168–169** | +84 KB, +87 |
+| + MBA + anti-LLM + flow (normal/aggressive/8000) | 455 KB | 175 | +242 KB, +94 |
+
+Flow overrides cost **158 KB for 6 extra failing methods**, so they were dropped;
+MBA costs 14 KB for 3 and stays. Anti-LLM is the only pass with a large
+protection-per-byte return.
+
+### Static per-tick cost (bytecode proxy)
+
+Measured with `javap -c` on the module classes (`render` = the method that
+references `ShapeMode`, `chunk` = the method that references `class_2818`):
+
+| profile | methods | total instr | render method | chunk method | exception handlers |
+| --- | --- | --- | --- | --- | --- |
+| unprotected source | 110 | 9,444 | 558 | 369 | 3 |
+| base `balanced` | 327 | 100,079 | 558 | 616 | 200 |
+| adopted (MBA + anti-LLM) | 436 | 159,337 | **894 (+60%)** | **777 (+110%)** | 309 |
+
+The adopted profile roughly doubles the instruction count of the chunk-scan and
+render helpers because every literal goes through a runtime table (`e[81]^e[80]`)
+and anti-LLM adds one forwarding hop per wrapped method. Instruction count is a
+proxy, not a frame-time measurement: real TPS/FPS numbers need the game, which
+this environment cannot run.
+
 Effect on the same source:
 
 | metric | before | after |
@@ -151,7 +182,7 @@ Effect on the same source:
 | readable module methods (score ≥ 6) | 3 | **0** |
 | decompiled output files | 10 | 7 (rest fail) |
 | leaked identifiers | 0 | 0 |
-| jar size | 213 KB | 453 KB |
+| jar size | 213 KB | 297 KB |
 | link check | 13/13 | 13/13 |
 
 The storage-ESP renderer now shows `e[81] ^ e[80]` runtime-table index
