@@ -31,6 +31,7 @@ Everything lands in `dist/`:
 | 5c | mixin guard (`verify-mixins.sh`) | on | compares the pre-protection jar with the output: mixin list, config package, entries, mixin class names and a declared refmap must be unchanged, otherwise the build fails |
 | 6 | SHA-256 + `keytool`/`jarsigner` | on | free JDK signing, signature verified after signing |
 | 7 | decompiler comparison | on | CFR, Vineflower, Procyon, JADX on the input and the protected jar |
+| 7b | decompile gate (`decompile-gate.sh`) | on | fails the build if the protected jar becomes more readable than `config/decompile-baseline.json` (CFR failures, Vineflower failures, leaked module identifiers) |
 
 Caesium is not used anywhere.
 

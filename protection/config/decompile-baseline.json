@@ -1,0 +1,6 @@
+{
+  "_comment": "Measured on the balanced preset (Umbra 3.4.0 + Aidsfuscator + sanitizer). The gate fails when a change makes the jar easier to decompile than this.",
+  "cfr_failures_min": 60,
+  "vineflower_failures_min": 20,
+  "leaked_identifiers_max": 1
+}

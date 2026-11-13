@@ -219,6 +219,12 @@ UMBRA_ARGS=(-i "$STAGE0" -o "$CURRENT"
     --compat-report "$OUT/umbra-compat.json")
 [ ${#LIB_ARGS[@]} -gt 0 ] && UMBRA_ARGS+=("${LIB_ARGS[@]}")
 
+# optional extra Umbra switches, e.g. UMBRA_FLAGS="--flatten"
+if [ -n "${UMBRA_FLAGS:-}" ]; then
+    read -r -a EXTRA_FLAGS <<< "$UMBRA_FLAGS"
+    UMBRA_ARGS+=("${EXTRA_FLAGS[@]}")
+fi
+
 # every --keep line produced by mixin-keeplist.sh
 if [ -s "$MIXIN_KEEP_FILE" ]; then
     while IFS= read -r keep; do
@@ -449,6 +455,18 @@ else
     warn "decompiler comparison skipped"
 fi
 
+# readability regression gate: a change may not make the jar easier to read
+if [ "$RUN_DECOMPILERS" = "1" ] && [ -x "$ROOT/protection/decompile-gate.sh" ]; then
+    if "$ROOT/protection/decompile-gate.sh" "$OUT/decompilers" "$ROOT/protection/config/decompile-baseline.json" \
+            > "$LOGS/decompile-gate.log" 2>&1; then
+        ok "decompile gate: $(head -1 "$LOGS/decompile-gate.log")"
+    else
+        tail -6 "$LOGS/decompile-gate.log"
+        fail "decompile gate failed - protection became more readable than the baseline"
+        GATE_FAIL=1
+    fi
+fi
+
 write_report
 
 log "done"
@@ -460,6 +478,11 @@ info "logs:     dist/logs/"
 
 if [ "${VM_BLOCK:-0}" = "1" ]; then
     fail "build failed: BytecodeVM layer exceeded its limit"
+    exit 1
+fi
+
+if [ "${GATE_FAIL:-0}" = "1" ]; then
+    fail "build failed: decompile gate regression"
     exit 1
 fi
 

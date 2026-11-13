@@ -67,6 +67,14 @@ post-processing pass in `protection/Sanitizer.java`.
 | G5 | no VM virtualization or aggressive flow on mixin classes | Aidsfuscator and BytecodeVM layers are skipped automatically while the jar contains a mixin class (`ALLOW_AIDS_WITH_MIXINS=1` is the only override, off by default) |
 | G6 | release blocked on mixin failure | the guard runs before signing and calls `die`, so no signed release jar is produced |
 
+## H. Decompile regression gate
+
+`decompile-gate.sh` runs after the comparison and fails the build when the
+protected jar becomes easier to read than the recorded baseline
+(`config/decompile-baseline.json`: CFR failures ≥ 60, Vineflower failures ≥ 20,
+readable module identifiers ≤ 1). Current build: **81 / 31 / 0 → passed**.
+Any future change that weakens the output stops the build before release.
+
 Verified with a synthetic mixin (`@Mixin(targets="net.minecraft.client.Minecraft")` + `@Inject`):
 
 - keep set generated: `com.example.addon.mixin.TestMixin`, `…TestMixin$*`
@@ -76,6 +84,42 @@ Verified with a synthetic mixin (`@Mixin(targets="net.minecraft.client.Minecraft
 
 The current addon still declares zero mixins, so the guard is a no-op today and
 activates automatically the moment a mixin is added.
+
+## Decompile attempt (CFR / Vineflower / Procyon / JADX)
+
+Run against the protected jar of build `fa99ff9`:
+
+| decompiler | result |
+| --- | --- |
+| CFR 0.152 | 81 methods fail with `ConfusedCFRException` / "This method has failed to decompile", including the module tick handler |
+| Vineflower 1.12.0 | 31 methods fail (`Couldn't be decompiled`) |
+| Procyon 0.6.0 | hundreds of `Unable to decompile` / `IllegalStateException` markers, 56k+ lines of partial output |
+| JADX 1.5.6 | produces files, no readable module logic |
+
+What does come out is not usable source:
+
+- classes are `modules/a|b|c`, `AddonTemplate` and two decoy packages
+  (`com/google/common/collect/v7`, `com/sun/security/util/gb`, `f5`, `lp`)
+- every setting name and user-facing sentence is a decryptor call, 0/4 long
+  strings and 0/8 keyword markers survive in CFR output
+- no module, record or helper name survives (0 leaked identifiers)
+- the decompiled classes do not compile: types are intermediary
+  (`net/minecraft/class_2338`), the setting API is obfuscated and the decryptor
+  runtime is present without its keys
+
+Config comparison (same source, same pipeline):
+
+| config | jar size | CFR failures | readable lines |
+| --- | --- | --- | --- |
+| **balanced (current default)** | 213 KB | **78–81** | 10.7k |
+| balanced + `--flatten` | 212 KB | 78 | 10.9k |
+| aggressive | 95 KB | 0 | 3.4k |
+| aggressive + `--flatten` | 280 KB | 2 | 28.9k |
+
+`balanced` stays the default because it is the only configuration where the
+module methods fail to decompile at all; `aggressive` produced a *smaller and
+fully decompilable* jar for this mod, so raising the preset would have made
+analysis easier.
 
 ## Measured result of the current build
 
