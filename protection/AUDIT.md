@@ -14,7 +14,7 @@ post-processing pass in `protection/Sanitizer.java`.
 | A1 | `SourceDebugExtension` (Umbra's SMAP decoy) and `SourceFile` survived in every class | an analyst gets the original file names and a line map back to the source | `Sanitizer` drops `visitSource` entirely (class 0 occurrences of both attributes) |
 | A2 | `LocalVariableTable`, `LineNumberTable`, `MethodParameters` were still present | local names re-identify logic, line tables rebuild control flow in decompilers | all three attributes are dropped by the sanitizer |
 | A3 | the private records kept readable names — `ChickenStorageESP$Entry`, `$EntityBox`, `$TracerTarget` (Umbra keeps record metadata) | module name plus purpose in a directory listing, the single biggest giveaway | renamed to `a/b/c`-style names by the sanitizer; `InnerClasses.inner_name` is re-derived too, so the old names disappeared from the constant pool (verified: 0 files contain them) |
-| A4 | class/package naming | Meteor resolves `MeteorAddon#getPackage()` from the string `com.example.addon`, the loader resolves the entrypoint by name | package names are never touched, `AddonTemplate` is never renamed, `fabric.mod.json` entrypoint is re-checked after every layer |
+| A4 | class/package naming | Meteor resolves `MeteorAddon#getPackage()` from the string `dev.chicken.addon`, the loader resolves the entrypoint by name | package names are never touched, `AddonTemplate` is never renamed, `fabric.mod.json` entrypoint is re-checked after every layer |
 | A5 | method names and descriptors | Meteor/Orbit find `@EventHandler` methods by annotation, settings by their own name strings | method annotations and descriptors are preserved, only member names are renamed by Umbra/Aidsfuscator |
 
 ## B. String protection
@@ -50,8 +50,8 @@ post-processing pass in `protection/Sanitizer.java`.
 
 ## F. Fabric compatibility
 
-- `fabric.mod.json`: kept, entrypoint verified after every layer (`com.example.addon.AddonTemplate`).
-- Mixin config: `addon-template.mixins.json` is present with an empty client list (the example mixin was removed); no mixin classes, no refmap.
+- `fabric.mod.json`: kept, entrypoint verified after every layer (`dev.chicken.addon.AddonTemplate`).
+- Mixin config: `chicken-addon.mixins.json` is present with an empty client list (the example mixin was removed); no mixin classes, no refmap.
 - Access widener: none in this project.
 - Link check: all 13 classes load against the real mod classpath (`VerifyJar`, 13/13, 0 failures).
 - **In-game test: not performed.** The build machine has no Minecraft installation and no display, so a real 1.21.11 launch, mixin injection and the Clear/Render/Cluster Bypass/Storage ESP behaviour are unverified.
@@ -77,7 +77,7 @@ Any future change that weakens the output stops the build before release.
 
 Verified with a synthetic mixin (`@Mixin(targets="net.minecraft.client.Minecraft")` + `@Inject`):
 
-- keep set generated: `com.example.addon.mixin.TestMixin`, `…TestMixin$*`
+- keep set generated: `dev.chicken.addon.mixin.TestMixin`, `…TestMixin$*`
 - unchanged jar: `mixins intact`, `annotation snapshot identical for 1 mixin class(es)`, exit 0
 - renamed mixin class: `FAIL mixin class missing or renamed`, exit 1
 - changed annotation value (`method="run"` → `riN`): `FAIL mixin annotations or members changed`, exit 1
@@ -203,3 +203,15 @@ regresses.
 | class linkage | — | 13/13 verified |
 | signature | — | `jarsigner -verify`: jar verified |
 | SHA-256 | — | see `dist/SHA256SUMS` |
+
+## V2 findings
+
+| id | finding | fix |
+| --- | --- | --- |
+| V1 | Skidfuscator after Umbra: 297 KB -> 1.29 MB (`exceptionReturn`+`flowCondition`), 2.1 MB with the full flow set, and module classes came back as `dev/chicken/addon/modules/*` | Skid moved before Umbra with only non-overlapping transforms; 60 KB -> 152 KB, Umbra keeps naming |
+| V2 | Skidfuscator with its own string/number/annotation encryption would collide with Umbra's per-site encryption and rewrite Fabric metadata | those transforms stay disabled in `config/skidfuscator.hocon` |
+| V3 | the jar carried a `native` method (`nativeNext(J)J`) that a platform library would have to satisfy | ASM layer turns every native method into a Java method that throws the same `UnsatisfiedLinkError`; 0 native methods remain, link check 14/14 |
+| V4 | transformed classes were never structurally verified | `CheckClassAdapter` runs on every rewritten class; a failure aborts the build |
+| V5 | no way to prove a shipped jar is byte-identical to the protected output | per-class SHA-256 manifest (`dist/*-integrity.txt`) + `verify-integrity.sh` after signing |
+| V6 | `com.example.addon` was still the entrypoint package | renamed to `dev.chicken.addon` in source, loader metadata, mixin config and `getPackage()`; mod id/name `chicken-addon`, version 1.0.0 |
+| V7 | decompile baseline was tuned to the pre-Skid profile | baseline raised to 180/28 CFR/Vineflower failures; current build 193/32 |

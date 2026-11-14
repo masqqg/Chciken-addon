@@ -8,6 +8,6 @@
 #   - never list tick/render/packet handlers
 #   - never list anything in the module update path
 #   - a normal entry looks like:
-#       class:com.example.addon.modules.*;method:* void *()
+#       class:dev.chicken.addon.modules.*;method:* void *()
 #
 # Empty on purpose: the safe default is no virtualization.

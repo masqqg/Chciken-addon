@@ -1,6 +1,6 @@
-package com.example.addon.modules;
+package dev.chicken.addon.modules;
 
-import com.example.addon.AddonTemplate;
+import dev.chicken.addon.AddonTemplate;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import java.io.File;

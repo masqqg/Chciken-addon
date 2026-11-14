@@ -1,6 +1,6 @@
-package com.example.addon.modules;
+package dev.chicken.addon.modules;
 
-import com.example.addon.AddonTemplate;
+import dev.chicken.addon.AddonTemplate;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.BoolSetting;
 import meteordevelopment.meteorclient.settings.IntSetting;

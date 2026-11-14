@@ -1,6 +1,6 @@
-package com.example.addon.modules;
+package dev.chicken.addon.modules;
 
-import com.example.addon.AddonTemplate;
+import dev.chicken.addon.AddonTemplate;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;

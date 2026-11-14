@@ -1,0 +1,7 @@
+2026-11-14 08:33:38 WARN  Skidfuscator:76 - -----------------------------------------------------
+Config is not in workspace
+Your current working directory is: /workspace/chats/776f4a383977f260fde7e2fd
+Your current config path is: /tmp/skidtest/B.hocon
+Please execute Skidfuscator in the same directory as your config for best compatibility!!
+----------------------------------------------------- 
+

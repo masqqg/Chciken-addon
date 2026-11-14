@@ -1,24 +1,24 @@
 {
   "schemaVersion": 1,
-  "id": "addon-template",
+  "id": "chicken-addon",
   "version": "${version}",
-  "name": "Meteor Extreme Shield",
+  "name": "Chicken Addon",
   "description": "Storage ESP bypass, amethyst cluster bypass and clear render.",
   "authors": [
     "seasnail"
   ],
   "contact": {
-    "sources": "https://github.com/MeteorDevelopment/meteor-addon-template"
+    "sources": "https://github.com/masqqg/Chciken-addon"
   },
   "icon": "assets/template/icon.png",
   "environment": "client",
   "entrypoints": {
     "meteor": [
-      "com.example.addon.AddonTemplate"
+      "dev.chicken.addon.AddonTemplate"
     ]
   },
   "mixins": [
-    "addon-template.mixins.json"
+    "chicken-addon.mixins.json"
   ],
   "custom": {
     "meteor-client:color": "225,25,25",

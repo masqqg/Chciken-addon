@@ -36,3 +36,7 @@ run/
 
 tools/protection/
 dist/
+
+# skidfuscator scratch
+skidfuscator-error-*.txt
+mappings/

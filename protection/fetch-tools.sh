@@ -28,6 +28,9 @@ fi
 get "https://repo1.maven.org/maven2/org/ow2/asm/asm/9.8/asm-9.8.jar" asm-9.8.jar || exit 1
 get "https://repo1.maven.org/maven2/org/ow2/asm/asm-commons/9.8/asm-commons-9.8.jar" asm-commons-9.8.jar || exit 1
 get "https://repo1.maven.org/maven2/org/ow2/asm/asm-tree/9.8/asm-tree-9.8.jar" asm-tree-9.8.jar || exit 1
+get "https://repo1.maven.org/maven2/org/ow2/asm/asm-util/9.8/asm-util-9.8.jar" asm-util-9.8.jar || exit 1
+get "https://github.com/skidfuscatordev/skidfuscator-java-obfuscator/releases/download/2.0.11/skidfuscator.jar" skidfuscator.jar || exit 1
+get "https://repo1.maven.org/maven2/org/ow2/asm/asm-analysis/9.8/asm-analysis-9.8.jar" asm-analysis-9.8.jar || exit 1
 
 # --- decompilers used by decompile-compare.sh ------------------------------
 get "https://github.com/leibnitz27/cfr/releases/download/0.152/cfr-0.152.jar" cfr-0.152.jar || true

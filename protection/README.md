@@ -53,7 +53,7 @@ added later. The pipeline enforces this every build:
    `@Overwrite`, `@Shadow` members, `remap` flags). Any difference is fatal: the
    pipeline stops before signing, so no release jar is produced.
 
-This addon currently declares no mixins (`addon-template.mixins.json` has an
+This addon currently declares no mixins (`chicken-addon.mixins.json` has an
 empty list), so the guard is a no-op today and becomes active the moment a mixin
 is added.
 
@@ -61,10 +61,10 @@ is added.
 
 Umbra detects the `fabric.mod.json` + mixin container and, by default for mods:
 
-- keeps the Meteor entrypoint class `com.example.addon.AddonTemplate` and rewrites loader metadata only when needed,
+- keeps the Meteor entrypoint class `dev.chicken.addon.AddonTemplate` and rewrites loader metadata only when needed,
 - keeps mixin configs, mixin classes, targets and target members,
 - disables archive class-encryption, standalone integrity seal, native code, reference hiding and resource rewriting,
-- keeps package names because `MeteorAddon#getPackage()` returns `com.example.addon` as a string.
+- keeps package names because `MeteorAddon#getPackage()` returns `dev.chicken.addon` as a string.
 
 The pipeline checks the entrypoint in `fabric.mod.json` after every layer and aborts if it was damaged.
 
@@ -114,3 +114,31 @@ manual checks on a real client:
 
 If a layer turns out to break the game, disable that layer with its switch
 above; Umbra stays as the required engine.
+
+## Chicken Addon V2 - pipeline stages
+
+    1. gradle remap (Fabric)
+    2. metadata + dependency analysis (protection-libs.txt, verify-jar.sh)
+    3. strict mixin exclusion (mixin-keeplist.sh keep set)
+    4. Skidfuscator Community 2.0.11 - selected flow transforms only
+       (exceptionReturn, flowCondition; see config/skidfuscator.hocon)
+    5. Umbra 3.4.0 - main engine, rename/strings/flow/MBA/anti-LLM
+    6. Aidsfuscator v2.10.0 (member renaming, no class renaming)
+    7. ASM custom protection (Sanitizer.java): class-name cleanup, metadata
+       strip, CheckClassAdapter verification, reflective name analysis,
+       native-method neutralisation, per-class integrity manifest
+    8. mixin guard + link check
+    9. CFR / Vineflower / Procyon / JADX comparison + decompile gate
+    10. SHA-256, signing, signature verification, integrity verification
+
+Skidfuscator runs **before** Umbra on purpose: running it after Umbra doubled
+the class files (297 KB -> 1.29 MB for `exceptionReturn`+`flowCondition` alone,
+2.1 MB with the full flow set) and reset the renamed class paths, because its
+flow driver duplicates already-flattened method bodies. On the remapped jar it
+costs 60 KB -> 152 KB, keeps Umbra's naming/string/flow work intact and still
+raised CFR-failing methods from 168 to 193.
+
+Native methods are removed by the ASM layer and replaced with the exact
+`UnsatisfiedLinkError` the JVM would throw, as ordinary Java code, so the jar
+never requires a native library; Umbra's own native guard already catches
+`Throwable` and falls back to returning its input.

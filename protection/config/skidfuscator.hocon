@@ -1,0 +1,39 @@
+# Skidfuscator Community 2.0.11 - selected transforms only.
+#
+# Runs on the remapped jar *before* Umbra, so Umbra keeps naming, string
+# encryption and its own flow work, and Skid's flow passes never touch
+# already-obfuscated bytecode (that combination produced a 7x size blow-up and
+# reset class names in testing).
+#
+# Overlapping with Umbra and therefore off:
+#   stringEncryption / numberEncryption        -> Umbra per-site string + integer encryption
+#   intAnnotationEncryption / stringAnnotationEncryption -> would rewrite Fabric/mixin metadata
+#   flowException (AGGRESSIVE)                 -> Umbra exception obfuscation already covers it
+#   flowSwitch / outliner / ahegao / flowFactoryMaker -> heavy size, low marginal gain here
+#   native / driver / reference / fileCrasher  -> Enterprise or unusable for a Fabric mod
+#   classRenamer / methodRenamer / fieldRenamer -> Umbra owns naming
+exempt: []
+libs: []
+
+stringEncryption { enabled: false }
+numberEncryption { enabled: false }
+intAnnotationEncryption { enabled: false }
+stringAnnotationEncryption { enabled: false }
+
+exceptionReturn { enabled: true }
+flowCondition { enabled: true }
+flowException { enabled: false, strength: AGGRESSIVE }
+flowRange { enabled: false }
+flowFactoryMaker { enabled: false }
+flowSwitch { enabled: false }
+outliner { enabled: false }
+ahegao { enabled: false }
+
+native { enabled: false }
+driver { enabled: false }
+reference { enabled: false }
+fileCrasher { enabled: false }
+
+classRenamer { enabled: false }
+methodRenamer { enabled: false }
+fieldRenamer { enabled: false }

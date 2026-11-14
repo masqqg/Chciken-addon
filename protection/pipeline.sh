@@ -46,6 +46,7 @@ if [ -z "${JAVA25_HOME:-}" ]; then
 fi
 
 UMBRA_PRESET="${UMBRA_PRESET:-balanced}"
+ENABLE_SKID="${ENABLE_SKID:-1}"
 UMBRA_REQUIRED="${UMBRA_REQUIRED:-1}"
 ENABLE_AIDS="${ENABLE_AIDS:-1}"
 ENABLE_VM="${ENABLE_VM:-0}"
@@ -88,12 +89,13 @@ entrypoint_ok() {
 write_report() {
     local report="$OUT/PROTECTION-REPORT.md"
     {
-        echo "# METEOR EXTREME SHIELD - protection report"
+        echo "# CHICKEN ADDON - protection report"
         echo
         echo "- build: \`$FINGERPRINT\`"
         echo "- input jar: \`${INPUT_JAR#"$ROOT"/}\`"
         echo "- output jar: \`${FINAL:-${CURRENT:-not built}}\`"
         echo "- umbra preset: \`$UMBRA_PRESET\` (seed \`$SEED\`)"
+        echo "- skidfuscator: \`$( [ "$ENABLE_SKID" = "1" ] && echo enabled || echo disabled )\` (community, selected transforms)"
         echo "- sha256: \`$( [ -n "${FINAL:-}" ] && sha256 "$FINAL" 2>/dev/null || echo n/a )\`"
         echo "- signed: \`$( [ "${SIGNED:-0}" = "1" ] && echo yes || echo no )\`"
         echo
@@ -110,6 +112,7 @@ write_report() {
         echo
         echo "| id | finding | fix |"
         echo "| --- | --- | --- |"
+        echo "| A0 | Skidfuscator flow passes double-process Umbra output (7x size, class names reset) | Skid runs on the remapped jar before Umbra, only non-overlapping transforms |"
         echo "| A1 | SourceDebugExtension/SourceFile survive Umbra | dropped by the ASM sanitizer (protection/Sanitizer.java) |"
         echo "| A2 | local variable tables, line numbers, method parameter names | dropped by the ASM sanitizer |"
         echo "| A3 | record classes keep names like ChickenStorageESP\$Entry | renamed consistently by the ASM sanitizer, package untouched so getPackage() stays valid |"
@@ -151,15 +154,15 @@ fi
 ok "input jar: ${INPUT_JAR#"$ROOT"/}"
 
 # ------------------------------------------------------- fingerprint/watermark
-log "1/7 build fingerprint + watermark"
+log "build fingerprint + watermark"
 
 BUILD_TIME="$(date -u +%Y%m%dT%H%M%SZ)"
 GIT_SHA="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo local)"
 MOD_VERSION="$(sed -n 's/^mod-version *= *"\(.*\)"/\1/p' "$ROOT/gradle/libs.versions.toml")"
-FINGERPRINT="MES-${MOD_VERSION:-0}-${GIT_SHA}-${BUILD_TIME}"
+    FINGERPRINT="CHICKEN-${MOD_VERSION:-0}-${GIT_SHA}-${BUILD_TIME}"
 SEED="${SEED:-$(printf '%d' "0x$(printf '%s' "$FINGERPRINT" | sha256sum | cut -c1-7)")}"
 
-BASE_NAME="meteor-extreme-shield-${MOD_VERSION:-0}-${GIT_SHA}"
+BASE_NAME="chicken-addon-${MOD_VERSION:-0}-${GIT_SHA}"
 
 STAGE0="$WORK/01-input.jar"
 cp "$INPUT_JAR" "$STAGE0"
@@ -208,11 +211,51 @@ else
 fi
 MIXIN_COUNT=$(grep -cvE '^[[:space:]]*$' "$MIXIN_CLASSES_FILE" 2>/dev/null | tr -d ' ')
 
-# ------------------------------------------------------------------ 2. Umbra
-log "2/7 Umbra - main engine (preset: $UMBRA_PRESET)"
+# ------------------------------------- 2. Skidfuscator Community (selected)
+log "Skidfuscator Community - selected flow transforms"
 
-CURRENT="$WORK/02-umbra.jar"
-UMBRA_ARGS=(-i "$STAGE0" -o "$CURRENT"
+CURRENT="$STAGE0"
+if [ "$ENABLE_SKID" != "1" ]; then
+    warn "disabled (ENABLE_SKID=0)"
+elif [ "${MIXIN_COUNT:-0}" -gt 0 ] && [ "${ALLOW_SKID_WITH_MIXINS:-0}" != "1" ]; then
+    warn "skipped: $MIXIN_COUNT mixin class(es) present, strict mixin protection keeps Skidfuscator out"
+elif [ ! -f "$TOOLS/skidfuscator.jar" ]; then
+    warn "skidfuscator.jar not present - layer disabled"
+else
+    SKID_LIBS="$WORK/skid-libs"
+    rm -rf "$SKID_LIBS"; mkdir -p "$SKID_LIBS"
+    if [ -f "$LIBS_FILE" ]; then
+        i=0
+        while IFS= read -r lib; do
+            [ -f "$lib" ] || continue
+            i=$((i + 1)); ln -sf "$lib" "$SKID_LIBS/lib$i.jar" 2>/dev/null
+        done < "$LIBS_FILE"
+    fi
+    SKID_OUT="$WORK/02-skid.jar"
+    if ( cd "$WORK" && timeout 300 "$JAVA_BIN" -jar "$TOOLS/skidfuscator.jar" obfuscate -notrack \
+            -cfg "$ROOT/protection/config/skidfuscator.hocon" \
+            -li "$SKID_LIBS" -o "$SKID_OUT" "$STAGE0" ) > "$LOGS/skidfuscator.log" 2>&1 \
+            && [ -f "$SKID_OUT" ]; then
+        if layer_size_ok "$STAGE0" "$SKID_OUT" && entrypoint_ok "$SKID_OUT" \
+                && "$ROOT/protection/verify-jar.sh" "$SKID_OUT" "$LIBS_FILE" > "$LOGS/skid-link.log" 2>&1; then
+            CURRENT="$SKID_OUT"
+            ok "Skidfuscator pass applied ($(tail -1 "$LOGS/skid-link.log")); size $(du -h "$STAGE0" | cut -f1) -> $(du -h "$SKID_OUT" | cut -f1)"
+        else
+            tail -3 "$LOGS/skid-link.log" 2>/dev/null
+            warn "Skidfuscator output rejected (size, entrypoint or link check) - layer disabled"
+        fi
+    else
+        tail -8 "$LOGS/skidfuscator.log"
+        warn "Skidfuscator failed - layer disabled, previous jar kept"
+    fi
+fi
+
+# ------------------------------------------------------------------ 3. Umbra
+log "Umbra - main engine (preset: $UMBRA_PRESET)"
+
+UMBRA_IN="$CURRENT"
+CURRENT="$WORK/03-umbra.jar"
+UMBRA_ARGS=(-i "$UMBRA_IN" -o "$CURRENT"
     --preset "$UMBRA_PRESET" --seed "$SEED"
     --mapping "$OUT/mapping.txt"
     --report-json "$OUT/umbra-report.json"
@@ -265,7 +308,7 @@ else
 fi
 
 # ----------------------------------------------------------- 3. Aidsfuscator
-log "3/7 Aidsfuscator V2 (optional)"
+log "Aidsfuscator V2 (optional)"
 
 if [ "${MIXIN_COUNT:-0}" -gt 0 ] && [ "${ALLOW_AIDS_WITH_MIXINS:-0}" != "1" ]; then
     warn "skipped: $MIXIN_COUNT mixin class(es) present, strict mixin protection keeps Aidsfuscator out"
@@ -313,7 +356,7 @@ else
 fi
 
 # -------------------------------------------------------------- 4. BytecodeVM
-log "4/7 BytecodeVM (optional, low-perf-risk methods only)"
+log "BytecodeVM (optional, low-perf-risk methods only)"
 
 VM_ALLOW="$ROOT/protection/config/bytecodevm-allowlist.txt"
 VM_ENTRIES=$(grep -vcE '^[[:space:]]*(#|$)' "$VM_ALLOW" 2>/dev/null | tr -d ' ')
@@ -360,7 +403,7 @@ else
 fi
 
 # ------------------------------------------------------------- 5. Kafuscator
-log "5/7 Kafuscator (optional)"
+log "Kafuscator (optional)"
 
 if [ "$ENABLE_KAFUSCATOR" != "1" ]; then
     warn "disabled (ENABLE_KAFUSCATOR=0): only a Windows x64 build is published, Fabric compatibility unverified"
@@ -376,10 +419,11 @@ fi
 # ---------------------------------------- 5b. ASM sanitizer (metadata + names)
 SANITIZED="$WORK/05-sanitized.jar"
 if [ -x "$ROOT/protection/sanitize.sh" ]; then
-    if "$ROOT/protection/sanitize.sh" "$CURRENT" "$SANITIZED" > "$LOGS/sanitize.log" 2>&1 \
+    if "$ROOT/protection/sanitize.sh" "$CURRENT" "$SANITIZED" "$OUT/asm-report.txt" > "$LOGS/sanitize.log" 2>&1 \
             && [ -f "$SANITIZED" ]; then
         CURRENT="$SANITIZED"
-        ok "sanitizer: $(tail -1 "$LOGS/sanitize.log")"
+        cp "$WORK/05-sanitized.integrity" "$OUT/${BASE_NAME}-integrity.txt" 2>/dev/null || true
+        ok "sanitizer: $(grep -E '^verified:|^reflection:|^integrity:' "$LOGS/sanitize.log" | tr '\n' ' ')"
     else
         tail -10 "$LOGS/sanitize.log"
         warn "sanitizer failed - previous jar kept"
@@ -401,7 +445,7 @@ else
 fi
 
 # ------------------------------------------------------------ 6. sign + hash
-log "6/7 link check + SHA-256 + signing"
+log "link check + integrity + SHA-256 + signing"
 
 # Every class of the layered jar must still link against the mod's libraries.
 if [ -f "$LIBS_FILE" ] && [ -x "$ROOT/protection/verify-jar.sh" ]; then
@@ -449,8 +493,17 @@ fi
 ( cd "$OUT" && sha256 "$(basename "$FINAL")" > SHA256SUMS && echo "  $(cat SHA256SUMS)" ) \
     && ok "SHA256SUMS written"
 
+if [ -x "$ROOT/protection/verify-integrity.sh" ] && [ -f "$OUT/${BASE_NAME}-integrity.txt" ]; then
+    if "$ROOT/protection/verify-integrity.sh" "$FINAL" "$OUT/${BASE_NAME}-integrity.txt" > "$LOGS/integrity.log" 2>&1; then
+        ok "integrity: $(tail -1 "$LOGS/integrity.log")"
+    else
+        tail -5 "$LOGS/integrity.log"
+        INTEGRITY_FAIL=1
+    fi
+fi
+
 # -------------------------------------------------------- 7. decompilers
-log "7/7 decompiler + analysis comparison"
+log "decompiler + analysis comparison"
 
 if [ "$RUN_DECOMPILERS" = "1" ] && [ -x "$ROOT/protection/decompile-compare.sh" ]; then
     if "$ROOT/protection/decompile-compare.sh" "$STAGE0" "$FINAL" "$OUT/decompilers" > "$LOGS/decompilers.log" 2>&1; then
@@ -491,6 +544,11 @@ fi
 
 if [ "${GATE_FAIL:-0}" = "1" ]; then
     fail "build failed: decompile gate regression"
+    exit 1
+fi
+
+if [ "${INTEGRITY_FAIL:-0}" = "1" ]; then
+    fail "build failed: class integrity mismatch after signing"
     exit 1
 fi
 

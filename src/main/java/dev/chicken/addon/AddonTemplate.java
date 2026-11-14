@@ -1,8 +1,8 @@
-package com.example.addon;
+package dev.chicken.addon;
 
-import com.example.addon.modules.ChickenStorageESP;
-import com.example.addon.modules.ClusterBypass;
-import com.example.addon.modules.ClearRender;
+import dev.chicken.addon.modules.ChickenStorageESP;
+import dev.chicken.addon.modules.ClusterBypass;
+import dev.chicken.addon.modules.ClearRender;
 
 import com.mojang.logging.LogUtils;
 import meteordevelopment.meteorclient.addons.GithubRepo;
@@ -33,11 +33,11 @@ public class AddonTemplate extends MeteorAddon {
 
     @Override
     public String getPackage() {
-        return "com.example.addon";
+        return "dev.chicken.addon";
     }
 
     @Override
     public GithubRepo getRepo() {
-        return new GithubRepo("MeteorDevelopment", "meteor-addon-template");
+        return new GithubRepo("masqqg", "Chciken-addon");
     }
 }
