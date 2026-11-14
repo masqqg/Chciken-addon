@@ -215,3 +215,23 @@ regresses.
 | V5 | no way to prove a shipped jar is byte-identical to the protected output | per-class SHA-256 manifest (`dist/*-integrity.txt`) + `verify-integrity.sh` after signing |
 | V6 | `com.example.addon` was still the entrypoint package | renamed to `dev.chicken.addon` in source, loader metadata, mixin config and `getPackage()`; mod id/name `chicken-addon`, version 1.0.0 |
 | V7 | decompile baseline was tuned to the pre-Skid profile | baseline raised to 180/28 CFR/Vineflower failures; current build 193/32 |
+
+## ClusterBypass save fix (Gson -> text)
+
+The chat error `Could not save geodes: Class ...$d declares multiple JSON fields named 'a'`
+came from Gson reflection over a nested class whose fields the obfuscators had
+renamed into collisions (both in the class and in its superclass chain). Gson is
+no longer used for this data:
+
+- new format: `cluster-bypass-geodes.txt`, header `# chicken-addon cluster-bypass geodes v2`,
+  one line per geode `x,z,y,count,visited,bud1;bud2;...` - no reflection, obfuscation cannot break it
+- the old `cluster-bypass-geodes.json` is still read: values are taken positionally
+  (`x,z,y,count,visited,buds`) and `true/false` literals are handled, so obfuscated
+  duplicate keys do not matter; the file is rewritten in the new format afterwards
+- errors are reported once (`saveErrorLogged`) and `saveDirty` stays set, so a failed
+  save is never reported as success while the chat is not spammed every save tick
+
+Min/max rule is now one shared, unit-testable function:
+`qualifies(count, confirms, min, max, confirmNeeded)` - count must be within
+`[min-buds, max-buds]` AND `confirm-sweeps` must be reached; changing min-buds
+alone can no longer qualify a chunk.

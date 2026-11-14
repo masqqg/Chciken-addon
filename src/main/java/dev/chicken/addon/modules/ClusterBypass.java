@@ -1,11 +1,7 @@
 package dev.chicken.addon.modules;
 
 import dev.chicken.addon.AddonTemplate;
-import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
 import java.io.File;
-import java.io.Reader;
-import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
@@ -80,8 +76,10 @@ public class ClusterBypass extends Module {
     /** Chunk işaretleri her zaman bu Y'de çizilir. */
     private static final int MARKER_Y = 64;
 
-    private static final String GEODE_FILE = "cluster-bypass-geodes.json";
-    private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
+    private static final String GEODE_FILE = "cluster-bypass-geodes.txt";
+    private static final String LEGACY_GEODE_FILE = "cluster-bypass-geodes.json";
+    /** Text format header; reflection free so obfuscation cannot break it. */
+    private static final String GEODE_HEADER = "# chicken-addon cluster-bypass geodes v2";
 
     private static final int QUIET_FULL_SCANS = 3;
     private static final int COLD_PERIOD = 5;
@@ -492,7 +490,7 @@ public class ClusterBypass extends Module {
         }
     }
 
-    /** Diske yazılan tek bir geode. */
+    /** Diske yazılan tek bir geode (yalnızca bu sinif icinde kullanilir). */
     private static final class SavedGeode {
         int x;
         int z;
@@ -502,9 +500,19 @@ public class ClusterBypass extends Module {
         long[] buds;
     }
 
-    private static final class SaveFile {
-        int version = 1;
-        List<SavedGeode> geodes = new ArrayList<>();
+    /**
+     * Tek dogrulama kurali: min-buds, max-buds ve confirm-sweeps birlikte.
+     * Min Buds=1 iken tek gecerli kaynak yeterlidir; min=2 iken iki kaynak
+     * gerekir; max-buds sinirini asan chunk gurultu sayilir; confirm-sweeps
+     * ise ayri bir kosuldur ve tek basina min-buds'u karsilamaz.
+     */
+    private boolean qualifies(ChunkState s) {
+        return qualifies(s.count, s.confirms, minimum.get(), maxBuds.get(), confirmSweeps.get());
+    }
+
+    /** Saf kural: test edilebilir, ayar okumaz. */
+    static boolean qualifies(int count, int confirms, int min, int max, int confirmNeeded) {
+        return count >= min && count <= max && confirms >= confirmNeeded;
     }
 
     private final Map<Long, ChunkState> chunks = new HashMap<>();
@@ -536,6 +544,7 @@ public class ClusterBypass extends Module {
     private int cacheVersion = -1;
     private int cacheSignature;
     private boolean saveDirty;
+    private boolean saveErrorLogged;
     private long lastSaveMs;
 
     public ClusterBypass() {
@@ -600,24 +609,35 @@ public class ClusterBypass extends Module {
         return new File(MeteorClient.FOLDER, GEODE_FILE);
     }
 
-    /** Onaylanmış geodeları diske yazar; hata olursa sohbete uyarı basar. */
+    private static File legacyGeodeFile() {
+        return new File(MeteorClient.FOLDER, LEGACY_GEODE_FILE);
+    }
+
+    /**
+     * Onaylanmis geodelari diske yazar. Gson/reflection KULLANILMAZ: obfuscation
+     * sirasinda field isimleri cakisinca "declares multiple JSON fields named a"
+     * hatasi olusuyordu. Metin bicimi obfuscation'dan etkilenmez.
+     */
     private void saveGeodes() {
         if (!persist.get() || !saveDirty) return;
 
-        SaveFile data = new SaveFile();
+        StringBuilder sb = new StringBuilder(GEODE_HEADER).append('\n');
 
         for (Map.Entry<Long, ChunkState> e : chunks.entrySet()) {
             ChunkState s = e.getValue();
             if (!s.persistent) continue;
 
-            SavedGeode g = new SavedGeode();
-            g.x = keyX(e.getKey());
-            g.z = keyZ(e.getKey());
-            g.y = s.avgYOr(MARKER_Y);
-            g.count = s.count;
-            g.visited = s.visited;
-            g.buds = s.buds;
-            data.geodes.add(g);
+            sb.append(keyX(e.getKey())).append(',')
+              .append(keyZ(e.getKey())).append(',')
+              .append(s.avgYOr(MARKER_Y)).append(',')
+              .append(s.count).append(',')
+              .append(s.visited ? 1 : 0).append(',');
+
+            for (int i = 0; i < s.buds.length; i++) {
+                if (i > 0) sb.append(';');
+                sb.append(s.buds[i]);
+            }
+            sb.append('\n');
         }
 
         File file = geodeFile();
@@ -625,57 +645,211 @@ public class ClusterBypass extends Module {
 
         try {
             if (!MeteorClient.FOLDER.exists()) MeteorClient.FOLDER.mkdirs();
-
-            try (Writer writer = Files.newBufferedWriter(tmp.toPath(), StandardCharsets.UTF_8)) {
-                GSON.toJson(data, writer);
-            }
-
+            Files.writeString(tmp.toPath(), sb.toString(), StandardCharsets.UTF_8);
             Files.move(tmp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING);
             saveDirty = false;
             lastSaveMs = System.currentTimeMillis();
-        } catch (Exception e) {
-            warning("Could not save geodes: %s", e.getMessage());
+            saveErrorLogged = false;
+        } catch (Exception ex) {
+            // Hata sessizce yutulmaz: bir kez bildirilir ve saveDirty kalir.
+            if (!saveErrorLogged) {
+                saveErrorLogged = true;
+                warning("Could not save geodes: %s", ex.getMessage());
+            }
         }
     }
 
-    /** Diskten kaydedilmiş geodeları yükler (modül açılınca / dünyaya girince). */
+    /** Diskten kaydedilmis geodelari yukler (yeni metin bicimi). */
     private void loadGeodes() {
         if (!persist.get()) return;
 
         File file = geodeFile();
-        if (!file.isFile()) return;
-
-        try (Reader reader = Files.newBufferedReader(file.toPath(), StandardCharsets.UTF_8)) {
-            SaveFile data = GSON.fromJson(reader, SaveFile.class);
-            if (data == null || data.geodes == null) return;
-
-            int loaded = 0;
-
-            for (SavedGeode g : data.geodes) {
-                if (g == null) continue;
-
-                ChunkState s = new ChunkState();
-                s.count = Math.max(0, g.count);
-                s.confirms = 100;
-                s.emitters = Math.max(1, s.count);
-                s.ySum = g.y * s.emitters;
-                s.visited = g.visited;
-                s.persistent = true;
-                s.buds = g.buds != null ? g.buds : new long[0];
-
-                long k = key(g.x, g.z);
-                chunks.put(k, s);
-                announced.add(k);
-                loaded++;
-            }
-
-            if (loaded > 0) {
-                dataVersion++;
-                if (debug.get()) info("Loaded %d saved geode(s)", loaded);
-            }
-        } catch (Exception e) {
-            warning("Could not load saved geodes: %s", e.getMessage());
+        if (!file.isFile()) {
+            loadLegacyGeodes();
+            return;
         }
+
+        try {
+            List<SavedGeode> loaded = new ArrayList<>();
+            for (String raw : Files.readAllLines(file.toPath(), StandardCharsets.UTF_8)) {
+                String line = raw.trim();
+                if (line.isEmpty() || line.startsWith("#")) continue;
+                SavedGeode g = parseLine(line);
+                if (g != null) loaded.add(g);
+            }
+            applyLoaded(loaded);
+        } catch (Exception ex) {
+            warning("Could not load saved geodes: %s", ex.getMessage());
+            loadLegacyGeodes();
+        }
+    }
+
+    private static SavedGeode parseLine(String line) {
+        String[] parts = line.split(",", -1);
+        if (parts.length < 5) return null;
+
+        try {
+            SavedGeode g = new SavedGeode();
+            g.x = Integer.parseInt(parts[0].trim());
+            g.z = Integer.parseInt(parts[1].trim());
+            g.y = Integer.parseInt(parts[2].trim());
+            g.count = Integer.parseInt(parts[3].trim());
+            g.visited = "1".equals(parts[4].trim());
+            g.buds = parseBuds(parts.length > 5 ? parts[5] : "");
+            return g;
+        } catch (NumberFormatException ex) {
+            return null;
+        }
+    }
+
+    private static long[] parseBuds(String raw) {
+        String text = raw.trim();
+        if (text.isEmpty()) return new long[0];
+
+        String[] parts = text.split(";");
+        long[] buds = new long[parts.length];
+        int n = 0;
+        for (String part : parts) {
+            try {
+                buds[n++] = Long.parseLong(part.trim());
+            } catch (NumberFormatException ex) {
+                return new long[0];
+            }
+        }
+        long[] out = new long[n];
+        System.arraycopy(buds, 0, out, 0, n);
+        return out;
+    }
+
+    /**
+     * Eski surumlerin Gson ile yazdigi dosyayi okur. Alan isimleri obfuscation
+     * yuzunden bozuk olabildigi icin isimlere guvenilmez; her {..} blogundaki
+     * sayilar sirayla x, z, y, count, visited, buds olarak okunur.
+     */
+    /**
+     * Eski Gson dosyasini alan isimlerine guvenmeden okur: her {..} blogundaki
+     * sayilar sirayla x, z, y, count, visited, buds olarak alinir. Obfuscation
+     * field isimlerini "a", "b" yaptigi icin isim tabanli okuma kullanilmaz.
+     */
+    static List<SavedGeode> parseLegacyJson(String text) {
+        List<SavedGeode> loaded = new ArrayList<>();
+
+        for (int i = 0; i < text.length(); i++) {
+            if (text.charAt(i) != '{') continue;
+
+            int depth = 0;
+            int close = -1;
+
+            for (int j = i; j < text.length(); j++) {
+                char ch = text.charAt(j);
+
+                if (ch == '{') {
+                    depth++;
+                } else if (ch == '}') {
+                    depth--;
+                    if (depth == 0) {
+                        close = j;
+                        break;
+                    }
+                }
+            }
+
+            if (close < 0) break;
+
+            String body = text.substring(i + 1, close);
+            if (body.indexOf('{') >= 0) continue; // root object; its children are parsed on their own pass
+
+            SavedGeode g = parseLegacyObject(body);
+            if (g != null) loaded.add(g);
+        }
+
+        return loaded;
+    }
+
+    /**
+     * Sirayla x, z, y, count, visited, buds okur. Degerler sayi veya true/false
+     * olabilir; obfuscation field adlarini bozdugu icin adlara guvenilmez.
+     */
+    private static SavedGeode parseLegacyObject(String body) {
+        java.util.regex.Matcher m = java.util.regex.Pattern
+                .compile("-?\\d+|true|false")
+                .matcher(body);
+
+        List<String> tokens = new ArrayList<>();
+        while (m.find()) tokens.add(m.group());
+
+        if (tokens.size() < 5) return null;
+
+        SavedGeode g = new SavedGeode();
+        try {
+            g.x = Integer.parseInt(tokens.get(0));
+            g.z = Integer.parseInt(tokens.get(1));
+            g.y = Integer.parseInt(tokens.get(2));
+            g.count = Integer.parseInt(tokens.get(3));
+        } catch (NumberFormatException ex) {
+            return null;
+        }
+
+        String visited = tokens.get(4);
+        g.visited = visited.equals("true") || (!visited.equals("false") && Long.parseLong(visited) != 0);
+
+        g.buds = new long[Math.max(0, tokens.size() - 5)];
+        for (int b = 5; b < tokens.size(); b++) {
+            try {
+                g.buds[b - 5] = Long.parseLong(tokens.get(b));
+            } catch (NumberFormatException ex) {
+                g.buds = new long[0];
+                break;
+            }
+        }
+
+        return g;
+    }
+
+    private void loadLegacyGeodes() {
+        File legacy = legacyGeodeFile();
+        if (!legacy.isFile()) return;
+
+        try {
+            String text = Files.readString(legacy.toPath(), StandardCharsets.UTF_8);
+            List<SavedGeode> loaded = parseLegacyJson(text);
+
+            if (!applyLoaded(loaded)) return;
+
+            saveDirty = true;
+            saveGeodes();
+        } catch (Exception ex) {
+            warning("Could not load legacy geodes: %s", ex.getMessage());
+        }
+    }
+
+    private boolean applyLoaded(List<SavedGeode> loaded) {
+        if (loaded.isEmpty()) return false;
+
+        int n = 0;
+        for (SavedGeode g : loaded) {
+            if (g == null) continue;
+
+            ChunkState s = new ChunkState();
+            s.count = Math.max(0, g.count);
+            s.confirms = 100;
+            s.emitters = Math.max(1, s.count);
+            s.ySum = g.y * s.emitters;
+            s.visited = g.visited;
+            s.persistent = true;
+            s.buds = g.buds != null ? g.buds : new long[0];
+
+            long k = key(g.x, g.z);
+            chunks.put(k, s);
+            announced.add(k);
+            n++;
+        }
+
+        if (n > 0) {
+            dataVersion++;
+            if (debug.get()) info("Loaded %d saved geode(s)", n);
+        }
+        return n > 0;
     }
 
     // ------------------------------------------------------------------ tick
@@ -789,7 +963,7 @@ public class ClusterBypass extends Module {
             }
 
             // Bir kez onaylanan geode kalıcıdır: menzilden çıkınca silinmez.
-            if (!state.persistent && state.count >= needed && state.confirms >= confirm) {
+            if (!state.persistent && qualifies(state)) {
                 state.persistent = true;
                 saveDirty = true;
                 saveGeodes();
@@ -800,7 +974,7 @@ public class ClusterBypass extends Module {
             }
 
             // Yeni onaylanan geode -> tek seferlik bildirim.
-            if (chatNotify.get() && found >= needed && state.confirms >= confirm && announced.add(k)) {
+            if (chatNotify.get() && qualifies(state) && announced.add(k)) {
                 notifyFound(c[0], c[1], state.avgYOr(fallbackY), state.count);
             }
         }
@@ -853,7 +1027,7 @@ public class ClusterBypass extends Module {
         for (Map.Entry<Long, ChunkState> e : chunks.entrySet()) {
             ChunkState s = e.getValue();
             if (s.visited) continue;
-            if (!s.persistent && (s.count < min || s.confirms < confirm)) continue;
+            if (!s.persistent && !qualifies(s)) continue;
 
             double dx = (keyX(e.getKey()) * 16.0 + 8.0) - px;
             double dy = s.avgYOr(fallbackY) - py;
@@ -1084,7 +1258,7 @@ public class ClusterBypass extends Module {
 
         for (Map.Entry<Long, ChunkState> e : chunks.entrySet()) {
             ChunkState s = e.getValue();
-            if (!s.persistent && (s.count < min || s.confirms < confirm)) continue;
+            if (!s.persistent && !qualifies(s)) continue;
             if (skipVisited && s.visited) continue;
 
             int cx = keyX(e.getKey());
@@ -1225,7 +1399,7 @@ public class ClusterBypass extends Module {
         for (Map.Entry<Long, ChunkState> e : chunks.entrySet()) {
             ChunkState s = e.getValue();
             if (s.buds.length == 0) continue;
-            if (markedOnly && !s.persistent && (s.count < min || s.confirms < confirm)) continue;
+            if (markedOnly && !s.persistent && !qualifies(s)) continue;
 
             long ck = e.getKey();
             if (Math.abs(keyX(ck) - pcx) > r || Math.abs(keyZ(ck) - pcz) > r) continue;
